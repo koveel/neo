@@ -209,6 +209,7 @@ struct VariableDefinitionStatement : public Expression
 struct VariableAccessExpression : public Expression
 {
 	std::string name;
+	bool loadValue = true; // Scuffed
 
 	VariableAccessExpression(uint32_t line)
 		: Expression(line)
@@ -229,7 +230,8 @@ struct FunctionPrototype
 struct FunctionDefinitionExpression : public Expression
 {
 	FunctionPrototype prototype;
-	std::unique_ptr<Expression> body;
+	//std::unique_ptr<Expression> body;
+	std::vector<std::unique_ptr<ASTNode>> body;
 
 	FunctionDefinitionExpression(uint32_t line)
 		: Expression(line)

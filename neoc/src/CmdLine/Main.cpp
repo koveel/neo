@@ -162,7 +162,9 @@ static void DebugPrintNode(ASTNode* baseNode)
 			for (auto& param : node->prototype.Parameters)
 				DebugPrintNode(param.get());
 
-			DebugPrintNode(node->body.get());
+			for (auto& sub : node->body)
+				DebugPrintNode(sub.get());
+
 			indentation--;
 
 			break;

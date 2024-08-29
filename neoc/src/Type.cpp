@@ -3,7 +3,7 @@
 #include "Type.h"
 
 std::unordered_map<std::string, Type> Type::RegisteredTypes;
-
+ 
 const char* Type::TagToString(TypeTag tag)
 {
 	switch (tag)
@@ -22,6 +22,30 @@ const char* Type::TagToString(TypeTag tag)
 	return "";
 }
 
+static TypeTag TagFromString(const char* str)
+{
+	std::pair<const char*, TypeTag> pairs[] =
+	{
+		{ "void",   TypeTag::Void    },
+		{ "i8",     TypeTag::Int8    },
+		{ "i16",    TypeTag::Int16   },
+		{ "i32",    TypeTag::Int32   },
+		{ "i64",    TypeTag::Int64   },
+		{ "f32",    TypeTag::Float32 },
+		{ "f64",    TypeTag::Float64 },
+		{ "string", TypeTag::String  },
+		{ "bool",   TypeTag::Bool    },
+	};
+
+	for (const auto& pair : pairs)
+	{
+		if (strcmp(pair.first, str) == 0)
+			return pair.second;
+	}
+
+	return TypeTag::Void;
+}
+
 Type* Type::Find(const std::string& name)
 {
 	if (RegisteredTypes.count(name))
@@ -32,10 +56,13 @@ Type* Type::Find(const std::string& name)
 
 Type* Type::FindOrAdd(const std::string& name)
 {
+	PROFILE_FUNCTION();
+
 	if (!RegisteredTypes.count(name))
 	{
 		Type& t = RegisteredTypes[name];
 		t.name = name;
+		t.tag = TagFromString(name.c_str());
 		return &t;
 	}
 
@@ -44,6 +71,8 @@ Type* Type::FindOrAdd(const std::string& name)
 
 Type* Type::FindOrAdd(TypeTag tag)
 {
+	PROFILE_FUNCTION();
+
 	auto it = std::find_if(std::begin(RegisteredTypes), std::end(RegisteredTypes),
 		[tag](auto&& p) { return p.second.tag == tag; });
 
@@ -52,9 +81,4 @@ Type* Type::FindOrAdd(TypeTag tag)
 		return &(RegisteredTypes[TagToString(tag)] = Type(tag));
 
 	return &it->second;
-}
-
-void Type::Register(const std::string& name, const Type& type)
-{
-	RegisteredTypes[name] = type;
 }

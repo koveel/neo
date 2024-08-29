@@ -2,11 +2,10 @@
 
 enum class TypeTag
 {
-	// Huh?!
-	Void = -1,
-
+	Void = 0,
 	// Integral
 	Int8, Int16, Int32, Int64,
+	UInt8, UInt16, UInt32, UInt64,
 	// Floatin' .
 	Float32, Float64,
 	Bool,
@@ -34,17 +33,16 @@ public:
 	static Type* Find(const std::string& name);
 	static Type* FindOrAdd(const std::string& name);
 	static Type* FindOrAdd(TypeTag tag);
-	static void Register(const std::string& name, const Type& type);
 	static const char* TagToString(TypeTag tag);
 public:
 	std::string name;
 	TypeTag tag = TypeTag::Void;
 	llvm::Type* raw = nullptr;
-	
-	struct
-	{
-		Type** memberTypes = nullptr;
-	} Struct;
+
+	//struct
+	//{
+	//	Type** memberTypes = nullptr;
+	//} Struct;
 public:
 	static std::unordered_map<std::string, Type> RegisteredTypes;
 };

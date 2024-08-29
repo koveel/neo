@@ -511,7 +511,21 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 	}
 	else
 	{
-		function->body = ParseCompoundStatement();
+		Advance();
+
+		// Parse body
+		while (current->type != TokenType::RightCurlyBracket && current->type != TokenType::Eof)
+		{
+			try
+			{
+				function->body.push_back(ParseLine());
+			}
+			catch (ParseError&)
+			{
+				continue;
+			}
+		}
+		Expect(TokenType::RightCurlyBracket, "expected '}' to close function body");
 	}
 
 
@@ -862,15 +876,6 @@ static void BeginParsingProcedure(ParseResult* result, bool totalSuccess = true)
 Parser::Parser()
 {
 	parser = this;
-
-	// Register all basic types
-	for (int i = 0; i < (int)TypeTag::COUNT; i++)
-	{
-		TypeTag tag = (TypeTag)i;
-		Type type { tag };
-
-		Type::Register(Type::TagToString(tag), type);
-	}
 }
 
 ParseResult Parser::Parse(Lexer* lexer)
