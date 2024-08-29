@@ -8,12 +8,6 @@ struct ParseResult
 	std::unique_ptr<struct CompoundStatement> Module;
 };
 
-enum class ParseState
-{
-	Default,
-	Definition, // { ... }
-};
-
 class Parser
 {
 public:
@@ -23,7 +17,7 @@ public:
 	// Flag error, attempt synchronization
 	static void Panic();
 
-	static Parser* GetParser(); // fuck this bruh
+	static Parser* GetParser(); // only used in error.h cause im dumb
 public:
 	Token current;
 	uint32_t scopeDepth = 0;

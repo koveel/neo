@@ -16,18 +16,14 @@ static std::unique_ptr<llvm::LLVMContext> context;
 static std::unique_ptr<llvm::IRBuilder<>> builder;
 static std::unique_ptr<llvm::Module> module;
 
-
 static Scope* sCurrentScope = nullptr;
 static llvm::Function* sCurrentFunction = nullptr;
-
-#define Assert(cond, line, msg, ...) { if (!(cond)) { throw CompileError(line, msg, __VA_ARGS__); } }
-#define SoftAssert(cond, line, msg, ...) { if (!(cond)) { Warn(line, msg, __VA_ARGS__); } }
 
 template<typename... Args>
 static void Warn(int line, const std::string& message, Args&&... args)
 {
 	SetConsoleColor(14);
-	fprintf(stdout, "warning (line %d): %s\n", line, FormatString(message.c_str(), std::forward<Args>(args)...).c_str());
+	fprintf(stdout, "[line %d] warning: %s\n", line, FormatString(message.c_str(), std::forward<Args>(args)...).c_str());
 	ResetConsoleColor();
 }
 

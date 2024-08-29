@@ -123,14 +123,6 @@ static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 	return expression;
 }
 
-template<typename T, typename = std::enable_if<std::is_base_of_v<Statement, T>>>
-static std::unique_ptr<T> MakeStatement()
-{
-	auto statement = std::make_unique<T>(parser->lexer->line);
-	return statement;
-}
-
-static std::unique_ptr<Expression> ParseStatement();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
 static std::unique_ptr<Expression> ParseCompoundStatement();
@@ -269,7 +261,7 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		type = UnaryType::PostfixDecrement;
 		break;
 	default:
-		return ParsePrimaryExpression(); // Parse a primary expression if we shouldn't parse a unary one
+		return ParsePrimaryExpression();
 	}
 
 	token = &next;
@@ -366,8 +358,6 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		{
 			return ParseIdentifierExpression();
 		}
-
-		// Do everything
 	}
 
 	Advance();
@@ -398,13 +388,10 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	
 	Advance(); // To : or :=
 	
-	//variable->scope = p arser->scopeDepth;
-	//variable->modifiers.isGlobal = parser->scopeDepth == 0;
-	
-	// TODO: use string view type shit
+	// TODO: use string view type shit or smth
 	std::string variableName = std::string(nameToken.start, nameToken.length);
 
-	auto variable = MakeStatement<VariableDefinitionStatement>();
+	auto variable = MakeExpression<VariableDefinitionStatement>();
 
 	variable->Name.start = nameToken.start;
 	variable->Name.length = nameToken.length;
@@ -423,11 +410,12 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	{
 		Token typeToken = Advance();
 
-		if (typeToken.type == TokenType::Const)
-		{
-			variable->modifiers.isConst = true;
-			typeToken = Advance(); // Through 'const'
-		}
+		// TODO: modifiers
+		//if (typeToken.type == TokenType::Const)
+		//{
+		//	variable->modifiers.isConst = true;
+		//	typeToken = Advance(); // Through 'const'
+		//}
 
 		// Handle pointer type
 		uint32_t pointerDepth = 0;
@@ -448,8 +436,6 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	if (parser->current.type == TokenType::Equal)
 	{
 		Advance(); // Through =
-
-		// Parse initializer
 		variable->initializer = ParseExpression(-1);
 	}
 
@@ -609,22 +595,9 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 	Token* token = &parser->current;
 	std::string identifier = std::string(token->start, token->length);
 
-	//ScopedValue value;
-	//Scope* scope = parser->currentScope;
-	//if (!scope->HasValue(identifier, &value))
-	//{
-	//	LogError("identifier \"%s\" not defined in scope", identifier.c_str());
-	//	return nullptr;
-	//}
-
 	Token* next = &parser->lexer->nextToken;
 	switch (next->type)
 	{
-		//case TokenType::Increment:
-		//case TokenType::Decrement:
-		//{
-		//	return ParseUnaryExpression(); // var++/--
-		//}
 		case TokenType::Dot:
 		{
 			return ParseStructMemberAccessExpression();
@@ -671,65 +644,6 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 	read->name = identifier;
 
 	return read;
-}
-
-static std::unique_ptr<Expression> ParseStatement()
-{
-	PROFILE_FUNCTION();
-
-	Token* token = &parser->current;
-
-	switch (token->type)
-	{
-		case TokenType::LeftCurlyBracket:
-			return ParseCompoundStatement();
-		case TokenType::If:
-			return ParseBranchStatement();
-		case TokenType::Import:
-			//return ParseImportStatement();
-		case TokenType::Const: // TODO: const after id
-		case TokenType::ID:
-		{
-			Token* next = &parser->lexer->nextToken;
-			switch (next->type)
-			{
-			case TokenType::Increment:
-			case TokenType::Decrement:
-				return ParseUnaryExpression();
-			case TokenType::WalrusTeeth:
-			case TokenType::Colon:
-			{
-				return ParseVariableDefinitionStatement();
-			}
-			case TokenType::DoubleColon:
-			{
-				Advance();
-
-				switch (next->type)
-				{
-				case TokenType::LeftParen:
-					//return ParseFunctionDefinition(&identifier);
-				case TokenType::Struct:
-					//return ParseStructureDefinition(&identifier);
-				default:
-					LogError("invalid declaration");
-					return nullptr;
-				}
-			}
-			case TokenType::LeftParen:
-				//return ParseFunctionCall();
-			case TokenType::Dot:
-				//return ParseMemberAccessStatement();
-			default:
-				return ParseExpression(-1);
-			}
-
-			LogError("invalid identifier expression", next->length, next->start);
-			return nullptr;
-		}
-	}
-
-	//return ParseExpressionStatement();
 }
 
 static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType)
@@ -782,11 +696,9 @@ static std::unique_ptr<Expression> ParseCompoundStatement()
 	PROFILE_FUNCTION();
 
 	Expect(TokenType::LeftCurlyBracket, "expect '{' to begin compound statement");
-
-	//parser->EnterState(ParseState::Definition);
 		
 	Token* token = &parser->current;
-	auto compound = MakeStatement<CompoundStatement>();
+	auto compound = MakeExpression<CompoundStatement>();
 
 	// Parse the statements in the block
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
@@ -794,21 +706,13 @@ static std::unique_ptr<Expression> ParseCompoundStatement()
 		// Is this shit even necessary
 		try
 		{
-			// auto statement = ParseExpression(-1);
-			auto statement = ParseLine();
-
-			//if (statement->nodeType != NodeType::Compound)
-			//	Expect(TokenType::Semicolon, "expected ';' to end line");
-
-			compound->children.push_back(std::move(statement));
+			compound->children.push_back(ParseLine());
 		}
 		catch (ParseError&)
 		{
 			continue;
 		}
 	}
-
-	//parser->ExitState();
 
 	Expect(TokenType::RightCurlyBracket, "expect '}' to end compound statement");
 
@@ -824,13 +728,7 @@ static void ParseModule(CompoundStatement* compound)
 	{
 		try
 		{
-			auto statement = ParseLine();
-
-			// Ugly ik
-			//if (statement->nodeType != NodeType::Compound) // Anything ending with right curly bracket }
-			//	Expect(TokenType::Semicolon, "expected ';' to end line");
-
-			compound->children.push_back(std::move(statement));
+			compound->children.push_back(ParseLine());
 		}
 		catch (ParseError&)
 		{
@@ -841,8 +739,6 @@ static void ParseModule(CompoundStatement* compound)
 
 static bool AttemptSynchronization()
 {
-	// TODO: handle scope change?
-
 	auto isAtSyncPoint = [](Token* token)
 	{
 		return token->type == TokenType::Semicolon || token->type == TokenType::RightCurlyBracket;
@@ -865,14 +761,6 @@ static bool AttemptSynchronization()
 	return true;
 }
 
-static void BeginParsingProcedure(ParseResult* result, bool totalSuccess = true)
-{
-	Advance();
-	ParseModule(result->Module.get());
-
-	result->Succeeded = totalSuccess;
-}
-
 Parser::Parser()
 {
 	parser = this;
@@ -888,11 +776,14 @@ ParseResult Parser::Parse(Lexer* lexer)
 	parser->lexer = lexer;
 	parser->result = &result;
 		
-	result.Module = MakeStatement<CompoundStatement>();
+	result.Module = MakeExpression<CompoundStatement>();
 
 	try
 	{
-		BeginParsingProcedure(&result);
+		Advance();
+		ParseModule(result.Module.get());
+
+		result.Succeeded = true;
 	}
 	catch (FatalError&)
 	{
@@ -905,16 +796,15 @@ ParseResult Parser::Parse(Lexer* lexer)
 void Parser::Panic()
 {
 	bool syncSucceeded = AttemptSynchronization();
-	ParseResult* result = parser->result;
 
 	if (syncSucceeded)
 	{
-		throw ParseError(); // Idek anymore
-		// Resume parsing
-		//BeginParsingProcedure(result, false);
+		throw ParseError();
 	}
 	else
 	{
+		ParseResult* result = parser->result;
+
 		// The world just exploded
 		result->Succeeded = false;
 		result->Module = nullptr;

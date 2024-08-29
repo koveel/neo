@@ -15,9 +15,7 @@ enum class NodeType
 	StructDefinition,
 };
 
-struct Statement;
 struct Expression;
-
 class llvm::Value;
 
 struct ASTNode
@@ -26,10 +24,6 @@ struct ASTNode
 	NodeType nodeType = NodeType::Default;
 
 	virtual llvm::Value* Generate() { return nullptr; }
-
-#ifdef NEOC_DEBUG
-	virtual void print() {}
-#endif
 };
 
 // EXPRESSIONS!!!
@@ -141,10 +135,8 @@ struct BranchExpression : public Expression
 {
 	std::unique_ptr<Expression> condition;
 	std::unique_ptr<Expression> body;
-	
-	std::unique_ptr<Expression> elseBranch; // BranchExpression
 
-	// TODO: else if
+	std::unique_ptr<Expression> elseBranch; // BranchExpression
 
 	BranchExpression(uint32_t line)
 		: Expression(line)
@@ -155,18 +147,8 @@ struct BranchExpression : public Expression
 	llvm::Value* Generate() override;
 };
 
-// STATEMENTS
-
-struct Statement : public ASTNode
-{
-	Statement(uint32_t line)
-	{
-		sourceLine = line;
-	}
-};
 
 // Block of statements?? tf is this shit
-//struct CompoundStatement : public Statement
 struct CompoundStatement : public Expression
 {
 	CompoundStatement(uint32_t line)
@@ -197,7 +179,6 @@ struct VariableDefinitionStatement : public Expression
 	} modifiers;
 
 	VariableDefinitionStatement(uint32_t line)
-		//: Statement(line)
 		: Expression(line)
 	{
 		nodeType = NodeType::VariableDefine;
@@ -230,7 +211,6 @@ struct FunctionPrototype
 struct FunctionDefinitionExpression : public Expression
 {
 	FunctionPrototype prototype;
-	//std::unique_ptr<Expression> body;
 	std::vector<std::unique_ptr<ASTNode>> body;
 
 	FunctionDefinitionExpression(uint32_t line)
