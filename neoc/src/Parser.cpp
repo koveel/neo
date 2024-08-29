@@ -246,35 +246,37 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		auto unary = makeUnary(UnaryType::Deref);
 		return unary;
 	}
-	}
-
-	// 	Handle any postfix unary operators (i++)
-	Token next = parser->lexer->nextToken;
-
-	UnaryType type = (UnaryType)0;
-	switch (next.type)
+	case TokenType::ID:
 	{
-	case TokenType::Increment:
-		type = UnaryType::PostfixIncrement; 
-		break;
-	case TokenType::Decrement:
-		type = UnaryType::PostfixDecrement;
-		break;
-	default:
-		return ParsePrimaryExpression();
+		// 	Handle any postfix unary operators (i++)
+		Token next = parser->lexer->nextToken;
+
+		UnaryType type = (UnaryType)0;
+		switch (next.type)
+		{
+		case TokenType::Increment:
+			type = UnaryType::PostfixIncrement;
+			break;
+		case TokenType::Decrement:
+			type = UnaryType::PostfixDecrement;
+			break;
+		default:
+			return ParsePrimaryExpression();
+		}
+
+		token = &next;
+
+		auto unary = MakeExpression<UnaryExpression>();
+		unary->operatorToken = *token;
+		unary->unaryType = type;
+
+		unary->operand = ParsePrimaryExpression();
+		Advance();
+		return unary;
+	}
 	}
 
-	token = &next;
-	
-	auto unary = MakeExpression<UnaryExpression>();
-	unary->operatorToken = *token;
-	unary->unaryType = type;
-
-	unary->operand = ParsePrimaryExpression();
-
-	Advance();
-
-	return unary;
+	return ParsePrimaryExpression();
 }
 
 static std::unique_ptr<Expression> ParsePrimaryExpression()

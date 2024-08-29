@@ -135,21 +135,7 @@ llvm::Value* UnaryExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	if (operand->nodeType == NodeType::VariableAccess && unaryType == UnaryType::Deref)
-	{
-		static_cast<VariableAccessExpression*>(operand.get())->loadValue = false;
-	}
-
 	llvm::Value* value = operand->Generate();
-	//if (operand->nodeType == NodeType::VariableAccess)
-	//{
-	//	value = builder->CreateLoad(value, false, "loadtmp");
-	//}
-
-	//bool operandIsPointer = value->getType()->isPointerTy();
-
-	//if (value->getType()->isPointerTy())
-	//	loadedValue = builder->CreateLoad(value, "loadtmp");
 
 	switch (unaryType)
 	{
@@ -209,14 +195,10 @@ llvm::Value* UnaryExpression::Generate()
 	}
 	case UnaryType::AddressOf:
 	{
-		return value;
-		llvm::Value* result = builder->CreateAlloca(value->getType(), nullptr, "allocatmp");
-		builder->CreateStore(value, result);
-		return result;
+		return value; // Industry trade secret - we don't actually take the address of it
 	}
 	case UnaryType::Deref:
 	{
-		//return value;
 		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
 		return loaded;
 	}
