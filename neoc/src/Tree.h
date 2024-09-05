@@ -133,10 +133,13 @@ struct BinaryExpression : public Expression
 
 struct BranchExpression : public Expression
 {
-	std::unique_ptr<Expression> condition;
-	std::unique_ptr<Expression> body;
-
-	std::unique_ptr<Expression> elseBranch; // BranchExpression
+	// If, else, else if
+	struct Branch
+	{
+		std::unique_ptr<Expression> condition; // nullptr for 'else'
+		std::vector<std::unique_ptr<Expression>> body;
+	};
+	std::vector<Branch> branches;
 
 	BranchExpression(uint32_t line)
 		: Expression(line)

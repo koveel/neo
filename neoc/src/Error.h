@@ -2,24 +2,7 @@
 
 #include "Parser.h"
 
-// Error during parsing / lexing
-//struct ParseError : std::exception
-//{
-//	int GetLine();
-//	int GetColumn();
-//	
-//	template<typename... Args>
-//	ParseError(const char* format, Args&&... args)
-//		: line(GetLine()), column(GetColumn())
-//	{
-//		message = FormatString(format, std::forward<Args>(args)...);
-//
-//		column = GetColumn();
-//	}
-//
-//	int line = 0, column = 0;
-//	std::string message;
-//};
+#define ASSERT(x) if (!(x)) { __debugbreak(); }
 
 template<typename... Args>
 extern void LogError(const char* format, Args&&... args)

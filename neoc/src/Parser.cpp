@@ -648,46 +648,83 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 	return read;
 }
 
+static BranchExpression::Branch ParseBranch(uint32_t branchType)
+{
+	BranchExpression::Branch branch;
+	branch.body.reserve(1);
+
+	if (branchType == 0 || branchType == 1) {
+		Advance();
+	}
+	else {
+		Advance();
+		Advance();
+	}
+
+	const char* branchKeywords[]
+	{
+		"if", "else", "else if"
+	};
+	const char* branchKeyword = branchKeywords[branchType];
+
+	// 'else' has no condition
+	if (branchType != 1)
+	{
+		Expect(TokenType::LeftParen, "expected '(' after %s", branchKeyword);
+		branch.condition = ParseExpression(-1);
+		Expect(TokenType::RightParen, "expected ')' after expression");
+	}
+
+	Token* current = &parser->current;
+	if (current->type != TokenType::LeftCurlyBracket)
+	{
+		branch.body.push_back(ParseLine());
+	}
+	else
+	{
+		Advance();
+
+		while (current->type != TokenType::RightCurlyBracket && current->type != TokenType::Eof)
+		{
+			auto expr = ParseLine();
+			branch.body.push_back(std::move(expr));
+		}
+
+		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for %s", branchKeyword);
+	}
+	
+	return branch;
+}
+
 static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType)
 {
 	PROFILE_FUNCTION();
 
+	using Branch = BranchExpression::Branch;
+
 	Token* current = &parser->current;
 	auto branch = MakeExpression<BranchExpression>();
 
-	Advance(); // Through if/else
-	bool expectCondition = true;
-	const char* branchKeyword = branchType == TokenType::If ? "if" : "else if"; // For error message
+	branch->branches.push_back(ParseBranch(0));
+	bool hasElse = false;
 
-	if (branchType == TokenType::Else)
+	while (current->type == TokenType::Else)
 	{
-		// So else if doesn't explode everything
-		if (expectCondition = current->type == TokenType::If)
-			Advance(); // To (
-	}
+		bool isElse = parser->lexer->nextToken.type != TokenType::If;
+		if (isElse)
+		{
+			hasElse = true;
+			branch->branches.push_back(ParseBranch(1));
+			continue;
+		}
 
-	if (expectCondition)
-	{
-		Expect(TokenType::LeftParen, "expected '(' after '%s'", branchKeyword);
-		branch->condition = ParseExpression(-1);
-		Expect(TokenType::RightParen, "expected ')' after expression");
-	}
-	
-	if (current->type == TokenType::LeftCurlyBracket)
-	{
-		branch->body = ParseCompoundStatement();
-	}
-	else
-	{
-		// No brackets
-		branch->body = ParseExpression(-1);
-		Expect(TokenType::Semicolon, "expected ';' to end line");
-	}
+		if (hasElse)
+		{
+			LogError("'else if' must precede 'else'");
+			return nullptr;
+		}
 
-	// Has an else branch
-	if (current->type == TokenType::Else)
-	{
-		branch->elseBranch = ParseBranchStatement(TokenType::Else);
+		branch->branches.push_back(ParseBranch(2));
 	}
 
 	return branch;

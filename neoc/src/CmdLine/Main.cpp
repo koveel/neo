@@ -143,13 +143,17 @@ static void DebugPrintNode(ASTNode* baseNode)
 			printf("[Branch]: \n");
 			indentation++;
 			
-			if (node->condition)
-				DebugPrintNode(node->condition.get());
-			DebugPrintNode(node->body.get());
-			indentation--;
+			for (auto& branch : node->branches)
+			{
+				if (branch.condition)
+					DebugPrintNode(branch.condition.get());
 
-			if (node->elseBranch)
-				DebugPrintNode(node->elseBranch.get());
+				indentation++;
+				for (auto& expr : branch.body)
+					DebugPrintNode(expr.get());
+				indentation--;
+			}
+			indentation--;
 
 			break;
 		}
@@ -206,11 +210,10 @@ static void DebugPrintTree(const std::unique_ptr<CompoundStatement>& module)
 
 	printf("Module:\n\n");
 	for (auto& node : module->children)
-	{		
+	{
 		DebugPrintNode(node.get());
 	}
 }
-
 
 int main(int argc, const char* argv[])
 {

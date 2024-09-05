@@ -367,11 +367,6 @@ llvm::Value* BinaryExpression::Generate()
 	return builder->CreateBinOp(instruction, lhs, rhs);
 }
 
-llvm::Value* BranchExpression::Generate()
-{
-	return nullptr;
-}
-
 llvm::Value* CompoundStatement::Generate()
 {
 	sCurrentScope = sCurrentScope->Deepen();
@@ -388,6 +383,66 @@ llvm::Value* CompoundStatement::Generate()
 	sCurrentScope = sCurrentScope->Increase();
 
 	return block;
+}
+
+llvm::Value* BranchExpression::Generate()
+{
+	PROFILE_FUNCTION();
+
+	// TODO: else if?
+
+	llvm::BasicBlock* parentBlock = builder->GetInsertBlock();
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "end", sCurrentFunction);
+
+	auto generateBranch = [endBlock, parentBlock](Branch& branch, const char* blockName)
+	{
+		PROFILE_FUNCTION();
+
+		llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, blockName, sCurrentFunction, endBlock);
+		builder->SetInsertPoint(block);
+
+		for (auto& expr : branch.body)
+			expr->Generate();
+
+		builder->CreateBr(endBlock);
+		builder->SetInsertPoint(parentBlock);
+
+		return block;
+	};
+
+	Branch& ifBranch = branches[0];
+	llvm::BasicBlock* trueBlock = generateBranch(ifBranch, "btrue"), *falseBlock = nullptr;
+
+	if (branches.size() > 1)
+		falseBlock = generateBranch(branches[branches.size() - 1], "bfalse");
+
+	llvm::BranchInst* branchInst = builder->CreateCondBr(ifBranch.condition->Generate(), trueBlock, falseBlock);
+	builder->SetInsertPoint(endBlock);
+
+	return branchInst;
+
+	//uint32_t branchIndex = 0;
+	//for (Branch& branch : branches)
+	//{
+	//	bool isElse = branchIndex == branches.size() - 1;
+	//	bool isElseIf = !isElse && branchIndex > 0;
+	//	ASSERT(!isElseIf);
+	//
+	//	llvm::BranchInst* branchInst = builder->CreateBr(branch.condition->Generate(), branchBlock, nullptr);
+	//	llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, "br_", nullptr, endBlock);
+	//
+	//	builder->SetInsertPoint(block);
+	//
+	//	sCurrentScope = sCurrentScope->Deepen();
+	//	blockBody->Generate();
+	//	sCurrentScope = sCurrentScope->Increase();
+	//
+	//	builder->CreateBr(endBlock);
+	//	builder->SetInsertPoint(parentBlock);
+	//
+	//	branchIndex++;
+	//}
+	//return nullptr;
 }
 
 llvm::Value* FunctionDefinitionExpression::Generate()

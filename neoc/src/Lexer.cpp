@@ -122,7 +122,7 @@ static Token StringToken()
 		if (c == '\n' || c == '\0')
 		{
 			Advance(-1);
-			LogError("unterminated string)");
+			LogError("unterminated string");
 			return {};
 		}
 
