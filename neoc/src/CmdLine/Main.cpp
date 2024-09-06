@@ -44,7 +44,7 @@ static void DebugPrintNode(ASTNode* baseNode)
 
 	switch (baseNode->nodeType)
 	{
-		case NodeType::PrimaryValue:
+		case NodeType::Primary:
 		{
 			const char* formatStringsForType[] =
 			{
@@ -66,14 +66,14 @@ static void DebugPrintNode(ASTNode* baseNode)
 
 			break;
 		}
-		case NodeType::StringValue:
+		case NodeType::String:
 		{
 			DYN_CAST_TO(StringExpression);
 			printf("[Expr]: type = string, value = \"%.*s\"\n", node->value.length, node->value.start);
 
 			break;
 		}
-		case NodeType::VariableDefine:
+		case NodeType::VariableDefinition:
 		{
 			DYN_CAST_TO(VariableDefinitionStatement);
 
@@ -112,7 +112,7 @@ static void DebugPrintNode(ASTNode* baseNode)
 
 			break;
 		}
-		case NodeType::UnaryExpr:
+		case NodeType::Unary:
 		{
 			DYN_CAST_TO(UnaryExpression);
 			printf("[Unary %.*s]:\n", node->operatorToken.length, node->operatorToken.start);
@@ -123,7 +123,7 @@ static void DebugPrintNode(ASTNode* baseNode)
 
 			break;
 		}
-		case NodeType::BinaryExpr:
+		case NodeType::Binary:
 		{
 			DYN_CAST_TO(BinaryExpression);
 			printf("[Binary %.*s]:\n", node->operatorToken.length, node->operatorToken.start);
@@ -136,7 +136,7 @@ static void DebugPrintNode(ASTNode* baseNode)
 
 			break;
 		}
-		case NodeType::BranchExpr:
+		case NodeType::Branch:
 		{
 			DYN_CAST_TO(BranchExpression);
 
@@ -215,12 +215,14 @@ static void DebugPrintTree(const std::unique_ptr<CompoundStatement>& module)
 	}
 }
 
+//#define NEOC_DIST
+
 int main(int argc, const char* argv[])
 {
 	PROFILE_BEGIN_SESSION("Profile", "ProfileResult.json");
 
 	// If we are running from the cmd line:
-#ifdef NEOC_RELEASE
+#ifdef NEOC_DIST
 	if (argc == 1)
 	{
 		fprintf(stderr, "Usage: limec <path>\n");
@@ -236,7 +238,7 @@ int main(int argc, const char* argv[])
 	}
 	
 	std::string mainPath = arguments.path;
-#elif NEOC_DEBUG
+#else
 	const char* argV[] = { "neoc", "C:/Users/edwar/Desktop/syntax_test/main.neo", "-br" };
 	uint32_t argC = std::size(argV);
 
@@ -255,6 +257,9 @@ int main(int argc, const char* argv[])
 		fprintf(stderr, "expected a .neo file\n");
 		return 1;
 	}
+
+	auto startTime = std::chrono::system_clock::now();
+
 	std::string contents = ReadFile(mainPath.c_str());
 	
 	Lexer lexer = Lexer(contents.c_str());
@@ -269,6 +274,9 @@ int main(int argc, const char* argv[])
 		Generator generator;
 		auto result = generator.Generate(parseResult, arguments);
 	
+		double elapsedTime = std::chrono::duration<double>(std::chrono::system_clock::now() - startTime).count();
+		printf("compilation took %f seconds\n", elapsedTime);
+
 		if (!result.Succeeded)
 			return 0;
 	

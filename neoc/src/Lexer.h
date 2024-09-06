@@ -25,14 +25,15 @@ enum class TokenType : char
 	Return,
 	Const,
 	Struct,
-	Null, 
+	Null,
 	Import,
+	For, Continue, Break,
 
 	// Misc
 	Percent, At, Hashtag, ID,
 	Pipe, DoublePipe,
 	Ampersand, DoubleAmpersand,
-	RightArrow, Ellipsis,
+	RightArrow, Ellipsis, MiniEllipsis,
 
 	// Literals
 	String, Number,

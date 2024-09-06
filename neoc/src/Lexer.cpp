@@ -92,11 +92,36 @@ static Token MakeNumber()
 {
 	PROFILE_FUNCTION();
 		
+	const char* currentBeforeDot;
+	int columnBeforeDot = 0;
+
 	// Advance through digits
-	while (IsDigit(Peek()) || Peek() == '.' || Peek() == 'f')
+	// A little more complicated than it should be cause we need to make sure theres only one decimal (.)
+	// 0..2 should be lexed as Number, MiniEllipsis, Number   instead of Number, Number
+	
+	bool atDot = false, previousCharWasDot = false;
+	while (IsDigit(Peek()) || (atDot = Peek() == '.') || Peek() == 'f')
 	{
+		if (atDot && !previousCharWasDot)
+		{
+			// cheeky little save point
+			currentBeforeDot = lexer->current;
+			columnBeforeDot = lexer->column;
+		}
+
+		if (atDot && previousCharWasDot)
+		{
+			// The dots arent a part of the number!!
+			lexer->current = currentBeforeDot;
+			lexer->column = columnBeforeDot;
+
+			break;
+		}
 		Advance(1);
+
+		previousCharWasDot = atDot;
 	}
+	//lexer->start = current;
 
 	Token token;
 
@@ -279,10 +304,16 @@ static void ProcessToken(Token* token)
 	case ';': *token = MakeToken(TokenType::Semicolon, 1); return;
 	case '.':
 	{
-		if (lexer->current[1] == '.' && lexer->current[2] == '.')
-			*token = MakeToken(TokenType::Ellipsis, 3);
-		else
+		if (lexer->current[1] == '.')
+		{
+			if (lexer->current[2] == '.')
+				*token = MakeToken(TokenType::Ellipsis, 3);
+			else
+				*token = MakeToken(TokenType::MiniEllipsis, 2);
+		} 
+		else {
 			*token = MakeToken(TokenType::Dot, 1); 
+		}
 		return;
 	}
 	case ',':  *token = MakeToken(TokenType::Comma, 1); return;
@@ -311,11 +342,25 @@ static void ProcessToken(Token* token)
 	case '\"': *token = StringToken(); return;
 
 	// Keywords
+	case 'b':
+	{
+		if (CheckKeyword("break", 5))
+		{
+			*token = MakeToken(TokenType::Break, 5);
+			return;
+		}
+		break;
+	}
 	case 'c':
 	{
 		if (CheckKeyword("const", 5))
 		{
 			*token = MakeToken(TokenType::Const, 5);
+			return;
+		}
+		if (CheckKeyword("continue", 8))
+		{
+			*token = MakeToken(TokenType::Continue, 8);
 			return;
 		}
 		break;
@@ -334,6 +379,11 @@ static void ProcessToken(Token* token)
 		if (CheckKeyword("false", 5))
 		{
 			*token = MakeToken(TokenType::False, 5);
+			return;
+		}
+		if (CheckKeyword("for", 3))
+		{
+			*token = MakeToken(TokenType::For, 3);
 			return;
 		}
 		break;
@@ -439,10 +489,7 @@ Token Lexer::Next()
 	
 	SkipWhitespace();
 
-	//try
-	//{
 	ProcessToken(&nextToken);
-	//} catch (ParseError&) {}
 
 	current = oldCurrent;
 	start = oldStart;

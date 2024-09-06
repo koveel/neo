@@ -27,9 +27,28 @@ static void Warn(int line, const std::string& message, Args&&... args)
 	ResetConsoleColor();
 }
 
+template<typename Expr>
+static Expr* To(std::unique_ptr<Expression>& expr)
+{
+	return static_cast<Expr*>(expr.get());
+}
+
 static bool IsAlloca(llvm::Value* v)
 {
 	return llvm::isa<llvm::AllocaInst>(v);
+}
+
+static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
+{
+	if (expr->nodeType != NodeType::Binary)
+		return false;
+
+	BinaryExpression* binary = To<BinaryExpression>(expr);
+	if (binary->binaryType != BinaryType::Range)
+		return false;
+
+	*outBinary = binary;
+	return true;
 }
 
 static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
@@ -38,12 +57,6 @@ static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expre
 		return generated;
 
 	return builder->CreateLoad(generated, false, "loadtmp");
-}
-
-template<typename Expr>
-static Expr* To(std::unique_ptr<Expression>& expr)
-{
-	return static_cast<Expr*>(expr.get());
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -82,6 +95,10 @@ llvm::Value* PrimaryExpression::Generate()
 
 	switch (type->tag)
 	{
+	case TypeTag::Pointer:
+		ASSERT(!value.ip64); // ???
+		ASSERT(false); // kys
+		break;
 	case TypeTag::Int8:
 		return llvm::ConstantInt::get(*context, llvm::APInt(8, (int8_t)value.i64));
 	case TypeTag::Int16:
@@ -247,12 +264,6 @@ llvm::Value* BinaryExpression::Generate()
 
 	llvm::Value* lhs = left->Generate();
 	llvm::Value* rhs = right->Generate();
-
-	// num = 5;     *i32  = i32
-	// pnum = @num; **i32 = *i32
-	// *pnum = 10;  *i32  = i32
-	// num2 = *pnum; // *i32 = i32
-	// num2 = num;
 
 	// Unless assiging, treat variables as the underlying values
 	if (binaryType != BinaryType::Assign)
@@ -443,6 +454,98 @@ llvm::Value* BranchExpression::Generate()
 	//	branchIndex++;
 	//}
 	//return nullptr;
+}
+
+llvm::Value* LoopControlFlowExpression::Generate()
+{
+	return nullptr;
+}
+
+llvm::Value* LoopExpression::Generate()
+{
+	BinaryExpression* rangeOperand = nullptr;
+	if (!IsRange(range, &rangeOperand))
+		throw CompileError(sourceLine, "expected range expression for loop");
+
+	auto minimum = rangeOperand->left->Generate();
+	auto maximum = rangeOperand->right->Generate();
+
+	// If reading variable, treat it as underlying value so the compiler does compiler stuff.
+	minimum = LoadIfVariable(minimum, rangeOperand->left);
+	maximum = LoadIfVariable(maximum, rangeOperand->right);
+
+	sCurrentScope = sCurrentScope->Deepen();
+
+	// Create iterator variable
+	llvm::Value* iteratorValuePtr = builder->CreateAlloca(minimum->getType());
+	{
+		sCurrentScope->AddValue(iteratorVariableName, { iteratorValuePtr });
+		// Starts at the range's minimum
+		builder->CreateStore(minimum, iteratorValuePtr);
+	}
+
+	llvm::BasicBlock* parentBlock = builder->GetInsertBlock();
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "for_end", sCurrentFunction);
+
+	llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(*context, "for_cond", sCurrentFunction, endBlock);
+	llvm::BasicBlock* incrementBlock = llvm::BasicBlock::Create(*context, "for_inc", sCurrentFunction, endBlock);
+	llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(*context, "for_body", sCurrentFunction, endBlock);
+
+	// Condition block
+	//	If iterator < rangeMax: jump to body block, otherwise jump to end block
+	builder->SetInsertPoint(conditionBlock);
+	{
+		llvm::Value* bShouldContinue = nullptr;
+
+		llvm::Value* iteratorVal = builder->CreateLoad(iteratorValuePtr);
+		llvm::Type* iteratorType = iteratorVal->getType();
+
+		// TODO: abstract
+		switch (iteratorType->getTypeID())
+		{
+			case llvm::Type::IntegerTyID:
+			{
+				bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximum);
+				break;
+			}
+			case llvm::Type::FloatTyID:
+			{
+				bShouldContinue = builder->CreateFCmpULE(iteratorVal, maximum);
+				break;
+			}
+		}
+
+		builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
+	}
+
+	// Increment block:
+	//	Increment iteratorValue
+	//	Jump to condition block
+	builder->SetInsertPoint(incrementBlock);
+	{
+		llvm::Value* iteratorVal = builder->CreateLoad(iteratorValuePtr);
+		builder->CreateStore(builder->CreateAdd(iteratorVal, Get1NumericalConstant(iteratorVal->getType()), "inc"), iteratorValuePtr);
+		builder->CreateBr(conditionBlock);
+	}
+
+	// Body block:
+	//	Generated expressions
+	//	Jump to increment block
+	builder->SetInsertPoint(bodyBlock);
+	{
+		for (auto& expr : body)
+			expr->Generate();
+
+		builder->CreateBr(incrementBlock);
+	}
+	
+	builder->SetInsertPoint(parentBlock);
+	builder->CreateBr(conditionBlock);
+	builder->SetInsertPoint(endBlock);
+
+	sCurrentScope = sCurrentScope->Increase();
+
+	return nullptr;
 }
 
 llvm::Value* FunctionDefinitionExpression::Generate()
@@ -662,18 +765,6 @@ static void ResolveType(const std::string& name, Type& type)
 static void ResolveParsedTypes(ParseResult& result)
 {
 	PROFILE_FUNCTION();
-	
-	// Resolve the primitive types
-	//{
-	//	Type::FindOrAdd(TypeTag::Int8)->raw    = llvm::Type::getInt8Ty(*context);
-	//	Type::FindOrAdd(TypeTag::Int32)->raw   = llvm::Type::getInt32Ty(*context);
-	//	Type::FindOrAdd(TypeTag::Int64)->raw   = llvm::Type::getInt64Ty(*context);
-	//	Type::FindOrAdd(TypeTag::Float32)->raw = llvm::Type::getFloatTy(*context);
-	//	Type::FindOrAdd(TypeTag::Float64)->raw = llvm::Type::getDoubleTy(*context);
-	//	Type::FindOrAdd(TypeTag::Bool)->raw    = llvm::Type::getInt1Ty(*context);
-	//	Type::FindOrAdd(TypeTag::String)->raw  = llvm::Type::getInt8PtrTy(*context);
-	//	Type::FindOrAdd(TypeTag::Void)->raw    = llvm::Type::getVoidTy(*context);
-	//}
 
 	for (auto& pair : Type::RegisteredTypes)
 	{
@@ -682,24 +773,18 @@ static void ResolveParsedTypes(ParseResult& result)
 
 		ResolveType(name, type);
 	}
-
-	//std::vector<llvm::Type*> llvm_members;
-	//for (auto& member : struct_members)
-	//	members.push_back(member->type->raw);
-	//
-	//struct_type = llvm::StructType::create(*context, members, type->name);
 }
 
-//static llvm::PassBuilder::OptimizationLevel GetLLVMOptimizationLevel(const CommandLineArguments& compilerArgs)
-//{
-//	switch (compilerArgs.optimizationLevel)
-//	{
-//		case 0: return llvm::PassBuilder::OptimizationLevel::O0;
-//		case 1: return llvm::PassBuilder::OptimizationLevel::O1;
-//		case 2: return llvm::PassBuilder::OptimizationLevel::O2;
-//		case 3: return llvm::PassBuilder::OptimizationLevel::O3;
-//	}
-//}
+static llvm::PassBuilder::OptimizationLevel GetLLVMOptimizationLevel(const CommandLineArguments& compilerArgs)
+{
+	switch (compilerArgs.optimizationLevel)
+	{
+		case 0: return llvm::PassBuilder::OptimizationLevel::O0;
+		case 1: return llvm::PassBuilder::OptimizationLevel::O1;
+		case 2: return llvm::PassBuilder::OptimizationLevel::O2;
+		case 3: return llvm::PassBuilder::OptimizationLevel::O3;
+	}
+}
 
 //static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)
 //{

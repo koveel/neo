@@ -7,15 +7,14 @@ enum class NodeType
 {
 	Default = 1,
 	Compound,
-	PrimaryValue, StringValue,
-	UnaryExpr, BinaryExpr,
-	VariableDefine, VariableAccess,
-	BranchExpr,
+	Primary, String,
+	Unary, Binary,
+	VariableDefinition, VariableAccess,
+	Branch, Loop, LoopControlFlow, Range,
 	FunctionDefinition, FunctionCall, Return,
 	StructDefinition,
 };
 
-struct Expression;
 class llvm::Value;
 
 struct ASTNode
@@ -51,7 +50,7 @@ struct PrimaryExpression : public Expression
 	PrimaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::PrimaryValue;
+		nodeType = NodeType::Primary;
 	}
 
 	llvm::Value* Generate() override;
@@ -69,7 +68,7 @@ struct StringExpression : public Expression
 	StringExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::StringValue;
+		nodeType = NodeType::String;
 	}
 
 	llvm::Value* Generate() override;
@@ -94,7 +93,7 @@ struct UnaryExpression : public Expression
 	UnaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::UnaryExpr;
+		nodeType = NodeType::Unary;
 	}
 
 	llvm::Value* Generate() override;
@@ -112,6 +111,7 @@ enum class BinaryType
 	LessEqual,
 	Greater,
 	GreaterEqual,
+	Range, // ..
 
 	And, Or,
 };
@@ -125,7 +125,7 @@ struct BinaryExpression : public Expression
 	BinaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::BinaryExpr;
+		nodeType = NodeType::Binary;
 	}
 
 	llvm::Value* Generate() override;
@@ -144,23 +144,56 @@ struct BranchExpression : public Expression
 	BranchExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::BranchExpr;
+		nodeType = NodeType::Branch;
 	}
 
 	llvm::Value* Generate() override;
 };
 
+enum class LoopControlFlowType
+{
+	Break, Continue
+};
+
+// Fck this
+struct LoopControlFlowExpression : public Expression
+{
+	LoopControlFlowType controlType;
+
+	LoopControlFlowExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = NodeType::LoopControlFlow;
+	}
+
+	llvm::Value* Generate();
+};
+
+struct LoopExpression : public Expression
+{
+	std::string iteratorVariableName;
+	std::unique_ptr<Expression> range;
+	std::vector<std::unique_ptr<Expression>> body;
+
+	LoopExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = NodeType::Loop;
+	}
+
+	llvm::Value* Generate() override;
+};
 
 // Block of statements?? tf is this shit
 struct CompoundStatement : public Expression
 {
+	std::vector<std::unique_ptr<ASTNode>> children;
+
 	CompoundStatement(uint32_t line)
 		: Expression(line)
 	{
 		nodeType = NodeType::Compound;
 	}
-	
-	std::vector<std::unique_ptr<ASTNode>> children;
 
 	llvm::Value* Generate() override;
 };
@@ -184,7 +217,7 @@ struct VariableDefinitionStatement : public Expression
 	VariableDefinitionStatement(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::VariableDefine;
+		nodeType = NodeType::VariableDefinition;
 	}
 
 	llvm::Value* Generate() override;
@@ -193,7 +226,6 @@ struct VariableDefinitionStatement : public Expression
 struct VariableAccessExpression : public Expression
 {
 	std::string name;
-	bool loadValue = true; // Scuffed
 
 	VariableAccessExpression(uint32_t line)
 		: Expression(line)

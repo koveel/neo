@@ -76,6 +76,8 @@ static BinaryType GetBinaryType(TokenType type)
 
 		case TokenType::DoubleAmpersand:   return BinaryType::And;
 		case TokenType::DoublePipe:        return BinaryType::Or;
+
+		case TokenType::MiniEllipsis:      return BinaryType::Range;
 	}
 
 	return (BinaryType)0;
@@ -84,7 +86,7 @@ static BinaryType GetBinaryType(TokenType type)
 // Higher priorities will be lower in the AST (hopefully?)
 static int GetBinaryPriority(BinaryType type)
 {
-	// TODO: confirm precedence is correct which it probably isnt cause im dumb ash
+	// TODO: confirm precedence is correct which it probably isnt cause im dumb
 	switch (type)
 	{
 		case BinaryType::CompoundMul:
@@ -108,6 +110,7 @@ static int GetBinaryPriority(BinaryType type)
 		case BinaryType::And:
 		case BinaryType::Or:
 		case BinaryType::Assign:
+		case BinaryType::Range:
 			return 18;
 	}
 
@@ -123,6 +126,8 @@ static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 	return expression;
 }
 
+static std::unique_ptr<Expression> ParseLoop();
+static std::unique_ptr<Expression> ParseLoopControlFlow();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
 static std::unique_ptr<Expression> ParseCompoundStatement();
@@ -148,7 +153,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 			return left;
 
 		Advance();  // Through operator
-
+		
 		auto binary = MakeExpression<BinaryExpression>(left->type);
 		binary->binaryType = type;
 		binary->operatorToken = token;
@@ -169,8 +174,9 @@ static std::unique_ptr<Expression> ParseLine()
 	// Scuffed, dont come at me
 	switch (expr->nodeType)
 	{
+	case NodeType::Loop:
+	case NodeType::Branch:
 	case NodeType::Compound:
-	case NodeType::BranchExpr:
 	case NodeType::StructDefinition:
 	case NodeType::FunctionDefinition:
 		expectSemicolon = false;
@@ -279,10 +285,28 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	return ParsePrimaryExpression();
 }
 
+//static std::unique_ptr<Expression> ParseRangeExpression()
+//{
+//	sParsingRange = true;
+//
+//	auto range = MakeExpression<RangeExpression>();
+//	
+//	range->min = ParseExpression(-1);
+//
+//	Expect(TokenType::MiniEllipsis, "expected '..' for range expression");
+//
+//	range->max = ParseExpression(-1);
+//	range->type = range->min->type;
+//
+//	sParsingRange = false;
+//
+//	return range;
+//}
+
 static std::unique_ptr<Expression> ParsePrimaryExpression()
 {
 	PROFILE_FUNCTION();
-
+	
 	Token token = parser->current;
 	
 	switch (token.type)
@@ -291,11 +315,21 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		{
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.ip64 = nullptr;
+			primary->type = Type::FindOrAdd(TypeTag::Pointer);
 			return primary;
 		}
 		case TokenType::Return:
 		{
 			return ParseReturnStatement();
+		}
+		case TokenType::For:
+		{
+			return ParseLoop();
+		}
+		case TokenType::Break:
+		case TokenType::Continue:
+		{
+			return ParseLoopControlFlow();
 		}
 		case TokenType::True:
 		{
@@ -590,6 +624,59 @@ static std::unique_ptr<Expression> ParseStructMemberAccessExpression()
 	node->name = identifierName + "." + memberName;
 
 	return node;
+}
+
+// break, continue
+static std::unique_ptr<Expression> ParseLoopControlFlow()
+{
+	Token token = parser->current;
+
+	auto expr = MakeExpression<LoopControlFlowExpression>();
+
+	if (token.type == TokenType::Break)
+		expr->controlType = LoopControlFlowType::Break;
+	else if (token.type == TokenType::Continue)
+		expr->controlType = LoopControlFlowType::Continue;
+
+	return expr;
+}
+
+static std::unique_ptr<Expression> ParseLoop()
+{
+	Token* current = &parser->current;
+
+	Advance(); // through for
+
+	auto loop = MakeExpression<LoopExpression>();
+	Expect(TokenType::LeftParen, "expected '(' after 'for'");
+
+	Token iteratorToken = *current;
+	Expect(TokenType::ID, "expected identifier after '('");
+
+	std::string iteratorName = std::string(iteratorToken.start, iteratorToken.length);
+	loop->iteratorVariableName = iteratorName;
+
+	Expect(TokenType::Colon, "expected ':' after identifier");
+
+	loop->range = ParseExpression(-1);
+
+	Expect(TokenType::RightParen, "expected ')' after expression");
+
+	if (current->type != TokenType::LeftCurlyBracket)
+	{
+		loop->body.push_back(ParseLine());
+	}
+	else
+	{
+		Advance();
+
+		while (current->type != TokenType::RightCurlyBracket && current->type != TokenType::Eof)
+			loop->body.push_back(ParseLine());
+
+		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for loop");
+	}
+
+	return loop;
 }
 
 static std::unique_ptr<Expression> ParseIdentifierExpression()

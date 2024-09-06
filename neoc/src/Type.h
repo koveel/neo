@@ -2,7 +2,7 @@
 
 enum class TypeTag
 {
-	Void = 0,
+	Void = 0, Pointer,
 	// Integral
 	Int8, Int16, Int32, Int64,
 	UInt8, UInt16, UInt32, UInt64,

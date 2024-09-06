@@ -24,6 +24,9 @@ const char* Type::TagToString(TypeTag tag)
 
 static TypeTag TagFromString(const char* str)
 {
+	if (str[0] == '*')
+		return TypeTag::Pointer;
+
 	std::pair<const char*, TypeTag> pairs[] =
 	{
 		{ "void",   TypeTag::Void    },
