@@ -25,11 +25,9 @@ struct ASTNode
 	virtual llvm::Value* Generate() { return nullptr; }
 };
 
-// EXPRESSIONS!!!
-
 struct Expression : public ASTNode
 {
-	Type* type = nullptr;
+	Type* type = nullptr;	 
 
 	Expression(uint32_t line)
 	{
@@ -58,7 +56,6 @@ struct PrimaryExpression : public Expression
 
 struct StringExpression : public Expression
 {
-	// todo: turn into propah struct?
 	struct
 	{
 		const char* start = nullptr;
@@ -112,6 +109,7 @@ enum class BinaryType
 	Greater,
 	GreaterEqual,
 	Range, // ..
+	MemberAccess,
 
 	And, Or,
 };
@@ -287,7 +285,7 @@ struct ReturnStatement : public Expression
 struct StructDefinitionExpression : public Expression
 {
 	std::string name;
-	std::vector<std::unique_ptr<Expression>> members;
+	std::vector<std::unique_ptr<VariableDefinitionStatement>> members;
 
 	StructDefinitionExpression(uint32_t line)
 		: Expression(line)

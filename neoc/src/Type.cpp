@@ -49,14 +49,6 @@ static TypeTag TagFromString(const char* str)
 	return TypeTag::Void;
 }
 
-Type* Type::Find(const std::string& name)
-{
-	if (RegisteredTypes.count(name))
-		return &RegisteredTypes.at(name);
-
-	return nullptr;
-}
-
 Type* Type::FindOrAdd(const std::string& name)
 {
 	PROFILE_FUNCTION();

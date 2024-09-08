@@ -30,7 +30,7 @@ static void Warn(int line, const std::string& message, Args&&... args)
 template<typename Expr>
 static Expr* To(std::unique_ptr<Expression>& expr)
 {
-	return static_cast<Expr*>(expr.get());
+	return dynamic_cast<Expr*>(expr.get());
 }
 
 static bool IsAlloca(llvm::Value* v)
@@ -53,10 +53,16 @@ static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBin
 
 static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
 {
-	if (expr->nodeType != NodeType::VariableAccess || !IsAlloca(generated))
+	if (auto unary = To<UnaryExpression>(expr))
+	{
+		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
+			return generated;
+	}
+
+	if (!IsAlloca(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
 
-	return builder->CreateLoad(generated, false, "loadtmp");
+	return builder->CreateLoad(generated);
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -153,6 +159,7 @@ llvm::Value* UnaryExpression::Generate()
 	PROFILE_FUNCTION();
 
 	llvm::Value* value = operand->Generate();
+	type = operand->type;
 
 	switch (unaryType)
 	{
@@ -181,42 +188,44 @@ llvm::Value* UnaryExpression::Generate()
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
-		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType()), "inctmp"), value);
+		llvm::Value* loaded = builder->CreateLoad(value);
+		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType())), value);
 
 		// Return newly incremented value
-		return builder->CreateLoad(value, "loadtmp");
+		return builder->CreateLoad(value);
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
-		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType()), "inctmp"), value);
+		llvm::Value* loaded = builder->CreateLoad(value);
+		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType())), value);
 
 		// Return value before increment
 		return loaded;
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
-		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType()), "dectmp"), value);
+		llvm::Value* loaded = builder->CreateLoad(value);
+		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType())), value);
 
-		return builder->CreateLoad(value, "loadtmp");
+		return builder->CreateLoad(value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
-		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType()), "dectmp"), value);
+		llvm::Value* loaded = builder->CreateLoad(value);
+		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType())), value);
 
 		return loaded;
 	}
 	case UnaryType::AddressOf:
 	{
+		type = type->GetPointerTo();
 		return value; // Industry trade secret - we don't actually take the address of it
 	}
 	case UnaryType::Deref:
 	{
-		llvm::Value* loaded = builder->CreateLoad(value, false, "loadtmp");
+		type = type->GetBaseType();
+		llvm::Value* loaded = builder->CreateLoad(value);
 		return loaded;
 	}
 	}
@@ -227,18 +236,19 @@ llvm::Value* UnaryExpression::Generate()
 llvm::Value* VariableDefinitionStatement::Generate()
 {
 	llvm::Value* initialVal = nullptr;
-	llvm::Type* ty = nullptr;
+	llvm::Type* initializerType = nullptr;
+
 	if (initializer)
 	{
-		initialVal = LoadIfVariable(initializer->Generate(), initializer);
+		initialVal = initializer->Generate();
 		initialVal = LoadIfPointer(initialVal, initializer);
 
-		if (!type)
-			ty = initialVal->getType();
+		initializerType = initialVal->getType();
+		type = initializer->type;
 	}
 
-	llvm::Value* alloc = builder->CreateAlloca(ty ? ty : type->raw);
-	sCurrentScope->AddValue(std::string(Name.start, Name.length), { alloc });
+	llvm::Value* alloc = builder->CreateAlloca(type->raw);
+	sCurrentScope->AddValue(std::string(Name.start, Name.length), { type, alloc });
 
 	if (!initialVal)
 		return alloc;
@@ -246,24 +256,107 @@ llvm::Value* VariableDefinitionStatement::Generate()
 	return builder->CreateStore(initialVal, alloc);
 }
 
+// todo: improve
+static Type* FindNeoTypeFromLLVMType(llvm::Type* type)
+{
+	PROFILE_FUNCTION();
+
+	for (auto& pair : Type::RegisteredTypes)
+	{
+		if (pair.second.raw == type)
+			return &pair.second;
+	}
+
+	if (type->isPointerTy())
+		return FindNeoTypeFromLLVMType(type->getContainedType(0));
+}
+
+static uint32_t GetTypePointerDepth(llvm::Type* type)
+{
+	uint32_t depth = 0;
+	llvm::Type* subtype = type->getContainedType(depth++);
+	while (true)
+	{
+		if (!subtype->isPointerTy())
+			break;
+
+		subtype = subtype->getContainedType(0);
+		depth++;
+	}
+
+	return depth;
+}
+
+static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* binary)
+{
+	PROFILE_FUNCTION();
+	
+	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
+	// If left is MemberAccess: objectValue = gepinst (ptr)
+	llvm::Value* objectValue = binary->left->Generate();
+	Type* objectType = FindNeoTypeFromLLVMType(objectValue->getType()->getContainedType(0));
+	ASSERT(objectType);
+
+	if (!objectType->IsStruct())
+	{
+		// This is where u would have used -> instead of . (if I wanted that stupid feature)
+		if (objectType->IsPointer())
+		{
+			objectValue = builder->CreateLoad(objectValue);
+			objectType = objectType->GetBaseType();
+		}
+		else
+			throw CompileError(binary->sourceLine, "can't access member of non-struct type or pointer to struct type");
+	}
+
+	// rhs should always be variable access expr
+	VariableAccessExpression* memberExpr = nullptr;
+	if (!(memberExpr = To<VariableAccessExpression>(binary->right)))
+		throw CompileError(binary->sourceLine, "expected variable access expression for rhs of member access");
+
+	const std::string& targetMemberName = memberExpr->name;
+
+	// Find member index
+	const auto& members = objectType->Struct.members;
+	int memberIndex = -1;
+	for (uint32_t i = 0; i < members.size(); i++)
+	{
+		auto& member = members[i];
+		if (member.name == targetMemberName)
+		{
+			binary->type = member.type;
+			memberIndex = i;
+			break;
+		}
+	}
+	if (memberIndex == -1)
+		throw CompileError(binary->sourceLine, "'%s' not a member of struct '%s'", memberExpr->name.c_str(), objectType->name.c_str());
+
+	llvm::Value* memberPtr = builder->CreateStructGEP(objectValue, (uint32_t)memberIndex);
+	return memberPtr;
+}
+
 llvm::Value* VariableAccessExpression::Generate()
 {
-	Value value;
-	if (!sCurrentScope->HasValue(name, &value))
+	Value variable;
+	if (!sCurrentScope->HasValue(name, &variable))
 		throw CompileError(sourceLine, "identifier '%s' not declared in scope", name.c_str());
 
-	//if (loadValue)
-	//	return builder->CreateLoad(value.raw);
-
-	return value.raw;
+	type = variable.type;
+	return variable.raw;
 }
 
 llvm::Value* BinaryExpression::Generate()
 {
 	using namespace llvm;
 
+	if (binaryType == BinaryType::MemberAccess)
+		return GenerateStructureMemberAccessExpression(this);
+
 	llvm::Value* lhs = left->Generate();
 	llvm::Value* rhs = right->Generate();
+
+	type = left->type;
 
 	// Unless assiging, treat variables as the underlying values
 	if (binaryType != BinaryType::Assign)
@@ -400,7 +493,7 @@ llvm::Value* BranchExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	// TODO: else if?
+	// TODO: else if
 
 	llvm::BasicBlock* parentBlock = builder->GetInsertBlock();
 	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "end", sCurrentFunction);
@@ -479,7 +572,7 @@ llvm::Value* LoopExpression::Generate()
 	// Create iterator variable
 	llvm::Value* iteratorValuePtr = builder->CreateAlloca(minimum->getType());
 	{
-		sCurrentScope->AddValue(iteratorVariableName, { iteratorValuePtr });
+		sCurrentScope->AddValue(iteratorVariableName, { rangeOperand->left->type, iteratorValuePtr });
 		// Starts at the range's minimum
 		builder->CreateStore(minimum, iteratorValuePtr);
 	}
@@ -519,7 +612,7 @@ llvm::Value* LoopExpression::Generate()
 	}
 
 	// Increment block:
-	//	Increment iteratorValue
+	//	Increment iterator
 	//	Jump to condition block
 	builder->SetInsertPoint(incrementBlock);
 	{
@@ -529,7 +622,7 @@ llvm::Value* LoopExpression::Generate()
 	}
 
 	// Body block:
-	//	Generated expressions
+	//	Body
 	//	Jump to increment block
 	builder->SetInsertPoint(bodyBlock);
 	{
@@ -593,7 +686,9 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		// Set names for function args
 		for (auto& arg : function->args())
 		{
-			auto nameView = prototype.Parameters[i++]->Name;
+			auto& parameter = prototype.Parameters[i++];
+
+			auto nameView = parameter->Name;
 			std::string name = std::string(nameView.start, nameView.length);
 			arg.setName(name);
 
@@ -601,7 +696,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 			{
 				llvm::Value* alloc = builder->CreateAlloca(arg.getType());
 				builder->CreateStore(&arg, alloc);
-				sCurrentScope->AddValue(name, { alloc });
+				sCurrentScope->AddValue(name, { parameter->type, alloc });
 			}
 		}
 	}
@@ -664,9 +759,9 @@ llvm::Value* FunctionCallExpression::Generate()
 		llvm::Value* value = expr->Generate();
 		value = LoadIfVariable(value, expr);
 
-		if (function->getArg(i++)->getType() != value->getType())
+		llvm::Type* expectedTy = function->getArg(i++)->getType();
+		if (expectedTy != value->getType())
 		{
-			//throw CompileError(sourceLine, "invalid type for argument %d passed to '%s' - expected %s but received %s", i, name.c_str());
 			throw CompileError(sourceLine, "invalid type for argument %d passed to '%s'", i - 1, name.c_str());
 		}
 
@@ -678,13 +773,13 @@ llvm::Value* FunctionCallExpression::Generate()
 
 llvm::Value* StructDefinitionExpression::Generate()
 {
+
+
 	return nullptr;
 }
 
 Generator::Generator()
 {
-	PROFILE_FUNCTION();
-	
 	context = std::make_unique<llvm::LLVMContext>();
 	module = std::make_unique<llvm::Module>(llvm::StringRef(), *context);
 	builder = std::make_unique<llvm::IRBuilder<>>(*context);
@@ -692,72 +787,84 @@ Generator::Generator()
 
 static void ResolveType(const std::string& name, Type& type)
 {
+	PROFILE_FUNCTION();
+
 	// Already resolved?
 	if (type.raw)
 		return;
 
-	bool isPointer = name[0] == '*';
-	bool isStruct = type.tag == TypeTag::Struct;
+	if (type.IsStruct())
+	{
+		auto& members = type.Struct.members;
 
-	if (isPointer)
+		std::vector<llvm::Type*> memberTypes;
+		memberTypes.reserve(members.size());
+
+		for (auto& member : members)
+		{
+			ResolveType(member.type->name, *member.type);
+			memberTypes.push_back(member.type->raw);
+		}
+
+		type.raw = llvm::StructType::create(*context, memberTypes, name);
+		return;
+	}
+	else if (type.IsPointer())
 	{
 		// *i32 -> i32
 		std::string containedName = std::string(name).erase(0, 1);
 		Type* contained = Type::FindOrAdd(containedName);
 		ResolveType(containedName, *contained);
 		type.raw = llvm::PointerType::get(contained->raw, 0u); // Magic address space of 0???
-
 		return;
 	}
-	else if (!isPointer)
+
+	switch (type.tag)
 	{
-		switch (type.tag)
+		case TypeTag::Int8:
 		{
-			case TypeTag::Int8:
-			{
-				type.raw = llvm::Type::getInt8Ty(*context);
-				break;
-			}
-			case TypeTag::Int16:
-			{
-				type.raw = llvm::Type::getInt16Ty(*context);
-				break;
-			}
-			case TypeTag::Int32:
-			{
-				type.raw = llvm::Type::getInt32Ty(*context);
-				break;
-			}
-			case TypeTag::Int64:
-			{
-				type.raw = llvm::Type::getInt64Ty(*context);
-				break;
-			}
-			case TypeTag::Float32:
-			{
-				type.raw = llvm::Type::getFloatTy(*context);
-				break;
-			}
-			case TypeTag::Float64:
-			{
-				type.raw = llvm::Type::getDoubleTy(*context);
-				break;
-			}
-			case TypeTag::Bool:
-			{
-				type.raw = llvm::Type::getInt1Ty(*context);
-				break;
-			}
-			case TypeTag::String:
-			{
-				type.raw = llvm::Type::getInt8PtrTy(*context);
-				break;
-			}
-			case TypeTag::Void:
-			{
-				type.raw = llvm::Type::getVoidTy(*context);
-				break;
-			}
+			type.raw = llvm::Type::getInt8Ty(*context);
+			break;
+		}
+		case TypeTag::Int16:
+		{
+			type.raw = llvm::Type::getInt16Ty(*context);
+			break;
+		}
+		case TypeTag::Int32:
+		{
+			type.raw = llvm::Type::getInt32Ty(*context);
+			break;
+		}
+		case TypeTag::Int64:
+		{
+			type.raw = llvm::Type::getInt64Ty(*context);
+			break;
+		}
+		case TypeTag::Float32:
+		{
+			type.raw = llvm::Type::getFloatTy(*context);
+			break;
+		}
+		case TypeTag::Float64:
+		{
+			type.raw = llvm::Type::getDoubleTy(*context);
+			break;
+		}
+		case TypeTag::Bool:
+		{
+			type.raw = llvm::Type::getInt1Ty(*context);
+			break;
+		}
+		case TypeTag::String:
+		{
+			type.raw = llvm::Type::getInt8PtrTy(*context);
+			break;
+		}
+		case TypeTag::Void:
+		{
+			type.raw = llvm::Type::getVoidTy(*context);
+			break;
 		}
 	}
 }
@@ -775,42 +882,58 @@ static void ResolveParsedTypes(ParseResult& result)
 	}
 }
 
-static llvm::PassBuilder::OptimizationLevel GetLLVMOptimizationLevel(const CommandLineArguments& compilerArgs)
+Type* Type::GetBaseType() const
 {
-	switch (compilerArgs.optimizationLevel)
-	{
-		case 0: return llvm::PassBuilder::OptimizationLevel::O0;
-		case 1: return llvm::PassBuilder::OptimizationLevel::O1;
-		case 2: return llvm::PassBuilder::OptimizationLevel::O2;
-		case 3: return llvm::PassBuilder::OptimizationLevel::O3;
-	}
+	ASSERT(IsPointer());
+	Type* baseType = FindOrAdd(name.substr(1));
+	ResolveType(baseType->name, *baseType);
+
+	return baseType;
 }
 
-//static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)
-//{
-//	using namespace llvm;
-//
-//	PROFILE_FUNCTION();
-//
-//	LoopAnalysisManager loopAnalysisManager;
-//	FunctionAnalysisManager functionAnalysisManager;
-//	CGSCCAnalysisManager cgsccAnalysisManager;
-//	ModuleAnalysisManager moduleAnalysisManager;
-//
-//	PassBuilder passBuilder;
-//
-//	// Register all the basic analyses with the managers
-//	passBuilder.registerModuleAnalyses(moduleAnalysisManager);
-//	passBuilder.registerCGSCCAnalyses(cgsccAnalysisManager);
-//	passBuilder.registerFunctionAnalyses(functionAnalysisManager);
-//	passBuilder.registerLoopAnalyses(loopAnalysisManager);
-//	passBuilder.crossRegisterProxies(loopAnalysisManager, functionAnalysisManager, cgsccAnalysisManager, moduleAnalysisManager);
-//
-//	ModulePassManager modulePassManager = passBuilder.buildPerModuleDefaultPipeline(GetLLVMOptimizationLevel(compilerArgs));
-//
-//	// Hells ya
-//	modulePassManager.run(*module, moduleAnalysisManager);
-//}
+Type* Type::GetPointerTo() const
+{
+	Type* pointerTy = FindOrAdd('*' + name);
+	ResolveType(pointerTy->name, *pointerTy);
+
+	return pointerTy;
+}
+
+static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)
+{
+	using namespace llvm;
+
+	PROFILE_FUNCTION();
+
+	PassBuilder passBuilder;
+
+	FunctionPassManager fpm;
+	LoopAnalysisManager loopAnalysisManager;
+	FunctionAnalysisManager functionAnalysisManager;
+	CGSCCAnalysisManager cgsccAnalysisManager;
+	ModuleAnalysisManager moduleAnalysisManager;
+
+	// Register all the basic analyses with the managers
+	passBuilder.registerModuleAnalyses(moduleAnalysisManager);
+	passBuilder.registerCGSCCAnalyses(cgsccAnalysisManager);
+	passBuilder.registerFunctionAnalyses(functionAnalysisManager);
+	passBuilder.registerLoopAnalyses(loopAnalysisManager);
+	passBuilder.crossRegisterProxies(loopAnalysisManager, functionAnalysisManager, cgsccAnalysisManager, moduleAnalysisManager);
+
+	PassBuilder::OptimizationLevel optLevel;
+	switch (compilerArgs.optimizationLevel)
+	{
+		case 0: optLevel = llvm::PassBuilder::OptimizationLevel::O0; break;
+		case 1: optLevel = llvm::PassBuilder::OptimizationLevel::O1; break;
+		case 2: optLevel = llvm::PassBuilder::OptimizationLevel::O2; break;
+		case 3: optLevel = llvm::PassBuilder::OptimizationLevel::O3; break;
+	}
+
+	ModulePassManager modulePassManager = passBuilder.buildPerModuleDefaultPipeline(optLevel);
+
+	// Hells ya
+	modulePassManager.run(*module, moduleAnalysisManager);
+}
 
 CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArguments& compilerArgs)
 {
@@ -830,11 +953,11 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 		}
 
 		// Optimizations
-		//if (compilerArgs.optimizationLevel > 0)
-		//{
-		//	// optimization level 9000%
-		//	DoOptimizationPasses(compilerArgs);
-		//}
+		if (compilerArgs.optimizationLevel > 0)
+		{
+			// optimization level 9000%
+			DoOptimizationPasses(compilerArgs);
+		}
 		
 		// Collect IR to string
 		llvm::raw_string_ostream stream(result.ir);

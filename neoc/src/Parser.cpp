@@ -78,6 +78,7 @@ static BinaryType GetBinaryType(TokenType type)
 		case TokenType::DoublePipe:        return BinaryType::Or;
 
 		case TokenType::MiniEllipsis:      return BinaryType::Range;
+		case TokenType::Dot:               return BinaryType::MemberAccess;
 	}
 
 	return (BinaryType)0;
@@ -89,6 +90,8 @@ static int GetBinaryPriority(BinaryType type)
 	// TODO: confirm precedence is correct which it probably isnt cause im dumb
 	switch (type)
 	{
+		case BinaryType::MemberAccess:
+			return 31;
 		case BinaryType::CompoundMul:
 		case BinaryType::Multiply:
 		case BinaryType::CompoundDiv:
@@ -213,8 +216,7 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		unary->unaryType = type;
 
 		Advance(); // To operand
-		unary->operand = ParsePrimaryExpression();
-
+		unary->operand = ParseExpression(-1);
 		unary->type = unary->operand->type;
 
 		return unary;
@@ -461,6 +463,12 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 			pointerDepth++;
 		}
 
+		// Array!!!
+		//if (token->type == TokenType::LeftSquareBracket)
+		//{
+		//	
+		//}
+
 		std::string typePrefix;
 		typePrefix.insert(typePrefix.begin(), pointerDepth, '*');
 		variable->type = Type::FindOrAdd(typePrefix + std::string(token->start, token->length));
@@ -590,14 +598,27 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 	Advance(); // Through struct
 	
 	auto structure = MakeExpression<StructDefinitionExpression>();
+	auto structType = structure->type;
+
 	structure->name = structName;
+
+	structType = Type::FindOrAdd(structName);
+	structType->tag = TypeTag::Struct;
+	auto& structData = structType->Struct;
 
 	Expect(TokenType::LeftCurlyBracket, "expected '{' after 'struct'");
 
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
 	{
 		auto member = ParseVariableDefinitionStatement();
-		structure->members.push_back(std::move(member));
+
+		// Cast to VariableDefinitionStatement
+		auto tmp = dynamic_cast<VariableDefinitionStatement*>(member.get());
+		std::unique_ptr<VariableDefinitionStatement> variable;
+		member.release();
+		variable.reset(tmp);
+
+		structData.members.push_back({ std::string(variable->Name.start, variable->Name.length), variable->type });
 
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}
@@ -687,10 +708,6 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 	Token* next = &parser->lexer->nextToken;
 	switch (next->type)
 	{
-		case TokenType::Dot:
-		{
-			return ParseStructMemberAccessExpression();
-		}
 		case TokenType::DoubleColon:
 		{
 			Advance(); // To ::

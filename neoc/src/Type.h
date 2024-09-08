@@ -5,7 +5,6 @@ enum class TypeTag
 	Void = 0, Pointer,
 	// Integral
 	Int8, Int16, Int32, Int64,
-	UInt8, UInt16, UInt32, UInt64,
 	// Floatin' .
 	Float32, Float64,
 	Bool,
@@ -28,9 +27,14 @@ public:
 
 	const std::string& GetName() const { return name; }
 
+	bool IsStruct() const { return tag == TypeTag::Struct; }
 	bool IsPointer() const { return name.size() > 0 && name[0] == '*'; }
+
+	// De-pointerfy
+	Type* GetBaseType() const;
+	// Pointerfy
+	Type* GetPointerTo() const;
 public:
-	static Type* Find(const std::string& name);
 	static Type* FindOrAdd(const std::string& name);
 	static Type* FindOrAdd(TypeTag tag);
 	static const char* TagToString(TypeTag tag);
@@ -39,10 +43,16 @@ public:
 	TypeTag tag = TypeTag::Void;
 	llvm::Type* raw = nullptr;
 
-	//struct
-	//{
-	//	Type** memberTypes = nullptr;
-	//} Struct;
+	struct StructType
+	{
+		struct Member
+		{
+			std::string name;
+			Type* type;
+		};
+
+		std::vector<Member> members;
+	} Struct;
 public:
 	static std::unordered_map<std::string, Type> RegisteredTypes;
 };
