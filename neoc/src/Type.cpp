@@ -46,7 +46,7 @@ static TypeTag TagFromString(const char* str)
 			return pair.second;
 	}
 
-	return TypeTag::Void;
+	return TypeTag::Unresolved;
 }
 
 Type* Type::FindOrAdd(const std::string& name)

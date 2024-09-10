@@ -2,7 +2,9 @@
 
 enum class TypeTag
 {
-	Void = 0, Pointer,
+	Unresolved = 0,
+
+	Void, Pointer,
 	// Integral
 	Int8, Int16, Int32, Int64,
 	// Floatin' .
@@ -40,7 +42,7 @@ public:
 	static const char* TagToString(TypeTag tag);
 public:
 	std::string name;
-	TypeTag tag = TypeTag::Void;
+	TypeTag tag = TypeTag::Unresolved;
 	llvm::Type* raw = nullptr;
 
 	struct StructType

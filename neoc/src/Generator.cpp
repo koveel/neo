@@ -4,10 +4,6 @@
 #include "Generator.h"
 
 #include "llvm/Passes/PassBuilder.h"
-#include "llvm/Transforms/InstCombine/InstCombine.h"
-#include "llvm/Transforms/Scalar.h"
-#include "llvm/Transforms/Scalar/GVN.h"
-#include "llvm/Transforms/Utils.h"
 
 #include "Scope.h"
 #include "PlatformUtils.h"
@@ -348,6 +344,8 @@ llvm::Value* VariableAccessExpression::Generate()
 
 llvm::Value* BinaryExpression::Generate()
 {
+	PROFILE_FUNCTION();
+
 	using namespace llvm;
 
 	if (binaryType == BinaryType::MemberAccess)
@@ -524,29 +522,6 @@ llvm::Value* BranchExpression::Generate()
 	builder->SetInsertPoint(endBlock);
 
 	return branchInst;
-
-	//uint32_t branchIndex = 0;
-	//for (Branch& branch : branches)
-	//{
-	//	bool isElse = branchIndex == branches.size() - 1;
-	//	bool isElseIf = !isElse && branchIndex > 0;
-	//	ASSERT(!isElseIf);
-	//
-	//	llvm::BranchInst* branchInst = builder->CreateBr(branch.condition->Generate(), branchBlock, nullptr);
-	//	llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, "br_", nullptr, endBlock);
-	//
-	//	builder->SetInsertPoint(block);
-	//
-	//	sCurrentScope = sCurrentScope->Deepen();
-	//	blockBody->Generate();
-	//	sCurrentScope = sCurrentScope->Increase();
-	//
-	//	builder->CreateBr(endBlock);
-	//	builder->SetInsertPoint(parentBlock);
-	//
-	//	branchIndex++;
-	//}
-	//return nullptr;
 }
 
 llvm::Value* LoopControlFlowExpression::Generate()
@@ -556,6 +531,8 @@ llvm::Value* LoopControlFlowExpression::Generate()
 
 llvm::Value* LoopExpression::Generate()
 {
+	PROFILE_FUNCTION();
+
 	BinaryExpression* rangeOperand = nullptr;
 	if (!IsRange(range, &rangeOperand))
 		throw CompileError(sourceLine, "expected range expression for loop");
@@ -647,60 +624,41 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 	type = Type::FindOrAdd(prototype.ReturnType->name);
 	bool hasBody = body.size();
-
+	
 	// Full definition for function
-	llvm::Function* function = module->getFunction(prototype.Name.c_str());
+	sCurrentFunction = module->getFunction(prototype.Name);
+
 	llvm::BasicBlock* previousBlock = builder->GetInsertBlock();
 	llvm::BasicBlock* bodyBlock = nullptr;
 
-	// Create function if it doesn't exist
-	if (!function)
+	// Create block, deepen scope
+	if (hasBody)
 	{
-		std::vector<llvm::Type*> parameterTypes(prototype.Parameters.size());
+		sCurrentScope = sCurrentScope->Deepen(); // No point in scoping args if there's no body
 
-		// Fill paramTypes with proper types
-		uint32_t i = 0;
-		for (auto& param : prototype.Parameters)
-			parameterTypes[i++] = param->type->raw;
-		i = 0;
-
-		llvm::Type* retType = prototype.ReturnType->raw;
-		if (!retType)
-			throw CompileError(sourceLine, "unresolved return type for function '%s'", prototype.Name.c_str());
-
-		llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
-		function = llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *module);
-		if (!function->empty())
-			throw CompileError(sourceLine, "function cannot be redefined");
-
-		sCurrentFunction = function;
-
-		if (hasBody)
-		{
-			sCurrentScope = sCurrentScope->Deepen(); // No point in scoping args if there's no body
-
-			bodyBlock = llvm::BasicBlock::Create(*context, "entry", sCurrentFunction);
-			builder->SetInsertPoint(bodyBlock);
-		}
-
-		// Set names for function args
-		for (auto& arg : function->args())
-		{
-			auto& parameter = prototype.Parameters[i++];
-
-			auto nameView = parameter->Name;
-			std::string name = std::string(nameView.start, nameView.length);
-			arg.setName(name);
-
-			if (hasBody)
-			{
-				llvm::Value* alloc = builder->CreateAlloca(arg.getType());
-				builder->CreateStore(&arg, alloc);
-				sCurrentScope->AddValue(name, { parameter->type, alloc });
-			}
-		}
+		bodyBlock = llvm::BasicBlock::Create(*context, "entry", sCurrentFunction);
+		builder->SetInsertPoint(bodyBlock);
 	}
 
+	// Set names for function args
+	uint32_t i = 0;
+	for (auto& arg : sCurrentFunction->args())
+	{
+		auto& parameter = prototype.Parameters[i++];
+
+		std::string name = std::string(parameter->Name.start, parameter->Name.length);
+		arg.setName(name);
+
+		if (!hasBody)
+			continue;
+
+		// Alloc arg
+		llvm::Value* alloc = builder->CreateAlloca(arg.getType());
+		builder->CreateStore(&arg, alloc);
+		sCurrentScope->AddValue(name, { parameter->type, alloc });
+	}
+
+	// Gen body
 	if (hasBody)
 	{
 		PROFILE_SCOPE("Generate function body");
@@ -711,7 +669,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		if (!bodyBlock->getTerminator())
 		{
 			if (type->tag != TypeTag::Void)
-				throw CompileError(sourceLine, "expected return statement in function '%s' (%s)", prototype.Name.c_str(), type->name.c_str());
+				throw CompileError(sourceLine, "expected return statement in function '%s'", prototype.Name.c_str());
 
 			builder->CreateRet(nullptr);
 		}
@@ -724,15 +682,15 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		PROFILE_SCOPE("Verify function");
 
 		// Handle any errors in the function
-		if (verifyFunction(*function, &llvm::errs()))
+		if (llvm::verifyFunction(*sCurrentFunction, &llvm::errs()))
 		{
 			//module->print(llvm::errs(), nullptr);
-			function->eraseFromParent();
+			sCurrentFunction->eraseFromParent();
 			throw CompileError(sourceLine, "function verification failed");
 		}
 	}
 
-	return function;
+	return sCurrentFunction;
 }
 
 llvm::Value* ReturnStatement::Generate()
@@ -745,6 +703,8 @@ llvm::Value* ReturnStatement::Generate()
 
 llvm::Value* FunctionCallExpression::Generate()
 {
+	PROFILE_FUNCTION();
+
 	llvm::Function* function = module->getFunction(name.c_str());
 	if (!function)
 		throw CompileError(sourceLine, "undeclared function '%s'", name.c_str());
@@ -773,7 +733,17 @@ llvm::Value* FunctionCallExpression::Generate()
 
 llvm::Value* StructDefinitionExpression::Generate()
 {
+	// We already resolved the struct type and its members but here we just flag an error if a member type if unresolved
+	
+	for (auto& vardef : members)
+	{
+		Type* memberType = vardef->type;
+		if (memberType->tag != TypeTag::Unresolved)
+			continue;
 
+		throw CompileError(vardef->sourceLine, "unresolved type '%s' for member '%s' in struct '%s'",
+			memberType->name.c_str(), std::string(vardef->Name.start, vardef->Name.length).c_str(), name.c_str());
+	}
 
 	return nullptr;
 }
@@ -869,6 +839,37 @@ static void ResolveType(const std::string& name, Type& type)
 	}
 }
 
+// todo: abstract?
+static void VisitFunctionDefinitions(ParseResult& result)
+{
+	PROFILE_FUNCTION();
+
+	// only works for top level functions rn
+	for (auto& node : result.Module->children)
+	{
+		if (node->nodeType != NodeType::FunctionDefinition)
+			continue;
+
+		auto definition = dynamic_cast<FunctionDefinitionExpression*>(node.get());
+		FunctionPrototype& prototype = definition->prototype;
+
+		if (module->getFunction(prototype.Name))
+			throw CompileError(node->sourceLine, "redefinition of function '%s'", prototype.Name.c_str());
+
+		// Param types
+		std::vector<llvm::Type*> parameterTypes(prototype.Parameters.size());
+		uint32_t i = 0;
+		for (auto& param : prototype.Parameters)
+			parameterTypes[i++] = param->type->raw;
+		i = 0;
+
+		llvm::Type* retType = prototype.ReturnType->raw;
+
+		llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
+		llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *module);
+	}
+}
+
 static void ResolveParsedTypes(ParseResult& result)
 {
 	PROFILE_FUNCTION();
@@ -880,6 +881,8 @@ static void ResolveParsedTypes(ParseResult& result)
 
 		ResolveType(name, type);
 	}
+
+	VisitFunctionDefinitions(result);
 }
 
 Type* Type::GetBaseType() const

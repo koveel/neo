@@ -152,7 +152,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 		BinaryType type = GetBinaryType(token.type);
 		int newPriority = GetBinaryPriority(type);
 
-		if (newPriority == 0 || newPriority <= priority) 
+		if (newPriority == 0 || newPriority < priority) 
 			return left;
 
 		Advance();  // Through operator
@@ -619,6 +619,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 		variable.reset(tmp);
 
 		structData.members.push_back({ std::string(variable->Name.start, variable->Name.length), variable->type });
+		structure->members.push_back(std::move(variable));
 
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}
