@@ -8,6 +8,11 @@
 #include "Scope.h"
 #include "PlatformUtils.h"
 
+// TODO:
+// struct member initialization
+// multi line variable def
+// struct aggregate initialization
+
 static std::unique_ptr<llvm::LLVMContext> context;
 static std::unique_ptr<llvm::IRBuilder<>> builder;
 static std::unique_ptr<llvm::Module> module;
@@ -262,13 +267,17 @@ llvm::Value* ArrayInitializationExpression::Generate()
 			throw CompileError(sourceLine, "array element type mismatch (index = %ld)", i);
 
 		if (!elementType)
+		{
+			type = expr->type->GetArrayTypeOf();
 			elementType = element->getType();
+		}
 
 		values.push_back(element);
 		i++;
 	}
 
 	llvm::Type* arrayTy = llvm::ArrayType::get(elementType, i);
+	type->raw = arrayTy;
 	llvm::Value* alloc = builder->CreateAlloca(arrayTy);
 	i = 0;
 
@@ -297,6 +306,7 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 	else
 	{
 		llvm::Type* arrayTy = llvm::ArrayType::get(type->raw, capacity);
+		type->raw = arrayTy;
 		value = builder->CreateAlloca(arrayTy);
 	}
 
@@ -308,12 +318,18 @@ llvm::Value* ArrayAccessExpression::Generate()
 {
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
 
-	llvm::Value* indexVal = index->Generate();
+	llvm::Value* indexVal = LoadIfPointer(index->Generate(), index);
 	if (!indexVal->getType()->isIntegerTy())
 		throw CompileError(sourceLine, "expected integer value for array index");
 
 	llvm::Value* arrayPtr = operand->Generate(); // todo: check this shit
-	type = operand->type;
+
+	// Should be doing this at the start of this function
+	if (!operand->type->IsArray())
+		throw CompileError(sourceLine, "expected target of array access [] to be of array type");
+
+	type = operand->type->GetBaseType();
+
 	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
 	llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
 
@@ -338,7 +354,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			{
 				auto arrayExpr = To<ArrayInitializationExpression>(initializer);
 				llvm::Value* array = arrayExpr->Generate();
-				sCurrentScope->AddValue(std::string(Name.start, Name.length), { type, array });
+				sCurrentScope->AddValue(std::string(Name.start, Name.length), { type = arrayExpr->type, array });
 				return array;
 			}
 			case NodeType::Primary:
@@ -728,7 +744,7 @@ llvm::Value* LoopExpression::Generate()
 
 	sCurrentScope = sCurrentScope->Increase();
 
-	return nullptr;
+	return endBlock;
 }
 
 llvm::Value* FunctionDefinitionExpression::Generate()
@@ -1019,8 +1035,13 @@ static void ResolveParsedTypes(ParseResult& result)
 
 Type* Type::GetBaseType() const
 {
-	ASSERT(IsPointer());
-	Type* baseType = FindOrAdd(name.substr(1));
+	Type* baseType = nullptr;
+	if (IsPointer())
+		baseType = FindOrAdd(name.substr(1));
+	if (IsArray())
+		baseType = FindOrAdd(name.substr(2));
+
+	ASSERT(baseType);
 	ResolveType(baseType->name, *baseType);
 
 	return baseType;
