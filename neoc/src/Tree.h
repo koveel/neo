@@ -10,9 +10,9 @@ enum class NodeType
 	Primary, String,
 	Unary, Binary,
 	VariableDefinition, VariableAccess,
-	Branch, Loop, LoopControlFlow, Range,
+	Branch, Loop, LoopControlFlow, Range, ArrayInitialize, ArrayAccess,
 	FunctionDefinition, FunctionCall, Return,
-	StructDefinition,
+	StructDefinition, ArrayDefinition,
 };
 
 class llvm::Value;
@@ -40,6 +40,7 @@ struct PrimaryExpression : public Expression
 	union
 	{
 		int64_t i64 = 0;
+		uint64_t u64;
 		int64_t* ip64;
 		bool b32;
 		double f64;
@@ -77,6 +78,7 @@ enum class UnaryType
 	Negate,
 	PrefixIncrement, PrefixDecrement,
 	PostfixIncrement, PostfixDecrement,
+	ArrayAccess,
 
 	AddressOf, Deref,
 };
@@ -196,8 +198,7 @@ struct CompoundStatement : public Expression
 	llvm::Value* Generate() override;
 };
 
-// Called a statement.. lowk an expression cause my api ass
-struct VariableDefinitionStatement : public Expression
+struct VariableDefinitionExpression : public Expression
 {
 	std::unique_ptr<Expression> initializer = nullptr;
 
@@ -207,15 +208,61 @@ struct VariableDefinitionStatement : public Expression
 		uint32_t length = 0;
 	} Name;
 
-	struct Modifiers
-	{
-		bool isGlobal = false, isConst = false;
-	} modifiers;
+	//struct Modifiers
+	//{
+	//	bool isGlobal = false, isConst = false;
+	//} modifiers;
 
-	VariableDefinitionStatement(uint32_t line)
+	VariableDefinitionExpression(uint32_t line)
 		: Expression(line)
 	{
 		nodeType = NodeType::VariableDefinition;
+	}
+
+	llvm::Value* Generate() override;
+};
+
+// [x, y, z]
+struct ArrayInitializationExpression : public Expression
+{
+	std::vector<std::unique_ptr<Expression>> elements;
+
+	ArrayInitializationExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = NodeType::ArrayInitialize;
+	}
+
+	llvm::Value* Generate() override;
+};
+
+// Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
+struct ArrayDefinitionExpression : public Expression
+{
+	VariableDefinitionExpression* definition = nullptr;
+
+	uint64_t capacity = 0;
+	//std::unique_ptr<Expression> capacityExpr;
+	std::unique_ptr<Expression> initializer;
+
+	ArrayDefinitionExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = NodeType::ArrayDefinition;
+	}
+
+	llvm::Value* Generate() override;
+};
+
+// prob not necessary
+struct ArrayAccessExpression : public UnaryExpression
+{
+	std::unique_ptr<Expression> index;
+
+	ArrayAccessExpression(uint32_t line)
+		: UnaryExpression(line)
+	{
+		nodeType = NodeType::ArrayAccess;
 	}
 
 	llvm::Value* Generate() override;
@@ -238,7 +285,7 @@ struct FunctionPrototype
 {
 	std::string Name;
 	Type* ReturnType = nullptr;
-	std::vector<std::unique_ptr<VariableDefinitionStatement>> Parameters;
+	std::vector<std::unique_ptr<VariableDefinitionExpression>> Parameters;
 };
 
 struct FunctionDefinitionExpression : public Expression
@@ -285,7 +332,7 @@ struct ReturnStatement : public Expression
 struct StructDefinitionExpression : public Expression
 {
 	std::string name;
-	std::vector<std::unique_ptr<VariableDefinitionStatement>> members;
+	std::vector<std::unique_ptr<VariableDefinitionExpression>> members;
 
 	StructDefinitionExpression(uint32_t line)
 		: Expression(line)

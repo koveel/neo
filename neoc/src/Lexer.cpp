@@ -100,8 +100,9 @@ static Token MakeNumber()
 	// 0..2 should be lexed as Number, MiniEllipsis, Number   instead of Number, Number
 	
 	bool atDot = false, previousCharWasDot = false;
-	while (IsDigit(Peek()) || (atDot = Peek() == '.') || Peek() == 'f')
+	while (IsDigit(Peek()) || (Peek() == '.') || Peek() == 'f')
 	{
+		atDot = Peek() == '.';
 		if (atDot && !previousCharWasDot)
 		{
 			// cheeky little save point

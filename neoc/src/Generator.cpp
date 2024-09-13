@@ -84,10 +84,14 @@ static llvm::Value* Get1NumericalConstant(llvm::Type* type)
 	switch (type->getTypeID())
 	{
 	case llvm::Type::IntegerTyID:
-		return llvm::ConstantInt::get(*context, llvm::APInt(type->getIntegerBitWidth(), 1, true));
+	{
+		bool isSigned = (bool)llvm::cast<llvm::IntegerType>(type)->getSignBit();
+		return llvm::ConstantInt::get(*context, llvm::APInt(type->getIntegerBitWidth(), 1, isSigned));
+	}
 	case llvm::Type::FloatTyID:
-	case llvm::Type::DoubleTyID:
 		return llvm::ConstantFP::get(*context, llvm::APFloat(1.0f));
+	case llvm::Type::DoubleTyID:
+		return llvm::ConstantFP::get(*context, llvm::APFloat(1.0));
 	}
 }
 
@@ -101,18 +105,31 @@ llvm::Value* PrimaryExpression::Generate()
 		ASSERT(!value.ip64); // ???
 		ASSERT(false); // kys
 		break;
+
+		// TODO: handle unsigned values properly (wrapping etc)
+
+	case TypeTag::UInt8:
+		return llvm::ConstantInt::get(*context, llvm::APInt(8, value.u64, false));
+	case TypeTag::UInt16:
+		return llvm::ConstantInt::get(*context, llvm::APInt(16, value.u64, false));
+	case TypeTag::UInt32:
+		return llvm::ConstantInt::get(*context, llvm::APInt(32, value.u64, false));
+	case TypeTag::UInt64:
+		return llvm::ConstantInt::get(*context, llvm::APInt(64, value.u64, false));
 	case TypeTag::Int8:
-		return llvm::ConstantInt::get(*context, llvm::APInt(8, (int8_t)value.i64));
+		return llvm::ConstantInt::get(*context, llvm::APInt(8, value.i64, true));
 	case TypeTag::Int16:
-		return llvm::ConstantInt::get(*context, llvm::APInt(16, (int16_t)value.i64));
+		return llvm::ConstantInt::get(*context, llvm::APInt(16, value.i64, true));
 	case TypeTag::Int32:
-		return llvm::ConstantInt::get(*context, llvm::APInt(32, (int32_t)value.i64));
+		return llvm::ConstantInt::get(*context, llvm::APInt(32, value.i64, true));
 	case TypeTag::Int64:
-		return llvm::ConstantInt::get(*context, llvm::APInt(64, value.i64));
+		return llvm::ConstantInt::get(*context, llvm::APInt(64, value.i64, true));
+
 	case TypeTag::Float32:
 		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64));
 	case TypeTag::Float64:
 		return llvm::ConstantFP::get(*context, llvm::APFloat(value.f64));
+
 	case TypeTag::Bool:
 		return llvm::ConstantInt::getBool(*context, value.b32);
 	}
@@ -226,16 +243,112 @@ llvm::Value* UnaryExpression::Generate()
 	}
 	}
 
-	throw CompileError(sourceLine, "invalid unary operator");
+	ASSERT(false);
 }
 
-llvm::Value* VariableDefinitionStatement::Generate()
+llvm::Value* ArrayInitializationExpression::Generate()
+{
+	std::vector<llvm::Value*> values;
+	values.reserve(elements.size());
+
+	uint64_t i = 0;
+
+	llvm::Type* elementType = type ? type->raw : nullptr;
+	for (auto& expr : elements)
+	{
+		llvm::Value* element = expr->Generate();
+		if (elementType && (elementType != element->getType()))
+			//throw CompileError(sourceLine, "expected %s as array element but got %s (index = %d)", )
+			throw CompileError(sourceLine, "array element type mismatch (index = %ld)", i);
+
+		if (!elementType)
+			elementType = element->getType();
+
+		values.push_back(element);
+		i++;
+	}
+
+	llvm::Type* arrayTy = llvm::ArrayType::get(elementType, i);
+	llvm::Value* alloc = builder->CreateAlloca(arrayTy);
+	i = 0;
+
+	// initialize elements (store into gep)
+	// *elementType
+	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
+	for (llvm::Value* value : values)
+	{
+		llvm::Value* index = llvm::ConstantInt::get(*context, llvm::APInt(32, i, false));
+		llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayTy, alloc, { zeroIndex, index });
+		builder->CreateStore(values[i], elementPtr);
+		i++;
+	}
+
+	return alloc;
+}
+
+llvm::Value* ArrayDefinitionExpression::Generate()
+{
+	llvm::Value* value = nullptr;
+	if (initializer)
+	{
+		value = initializer->Generate();
+		type = initializer->type;
+	}
+	else
+	{
+		llvm::Type* arrayTy = llvm::ArrayType::get(type->raw, capacity);
+		value = builder->CreateAlloca(arrayTy);
+	}
+
+	sCurrentScope->AddValue(std::string(definition->Name.start, definition->Name.length), { type, value });
+	return value;
+}
+
+llvm::Value* ArrayAccessExpression::Generate()
+{
+	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
+
+	llvm::Value* indexVal = index->Generate();
+	if (!indexVal->getType()->isIntegerTy())
+		throw CompileError(sourceLine, "expected integer value for array index");
+
+	llvm::Value* arrayPtr = operand->Generate(); // todo: check this shit
+	type = operand->type;
+	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
+	llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
+
+	return elementPtr;
+}
+
+llvm::Value* VariableDefinitionExpression::Generate()
 {
 	llvm::Value* initialVal = nullptr;
 	llvm::Type* initializerType = nullptr;
 
 	if (initializer)
 	{
+		switch (initializer->nodeType)
+		{
+			case NodeType::ArrayDefinition:
+			{
+				auto array = To<ArrayDefinitionExpression>(initializer);
+				return array->Generate();
+			}
+			case NodeType::ArrayInitialize:
+			{
+				auto arrayExpr = To<ArrayInitializationExpression>(initializer);
+				llvm::Value* array = arrayExpr->Generate();
+				sCurrentScope->AddValue(std::string(Name.start, Name.length), { type, array });
+				return array;
+			}
+			case NodeType::Primary:
+			{
+				auto primary = To<PrimaryExpression>(initializer);
+				primary->type = type;
+				break;
+			}
+		}
+
 		initialVal = initializer->Generate();
 		initialVal = LoadIfPointer(initialVal, initializer);
 
@@ -249,7 +362,8 @@ llvm::Value* VariableDefinitionStatement::Generate()
 	if (!initialVal)
 		return alloc;
 
-	return builder->CreateStore(initialVal, alloc);
+	builder->CreateStore(initialVal, alloc);
+	return alloc;
 }
 
 // todo: improve
@@ -461,10 +575,9 @@ llvm::Value* BinaryExpression::Generate()
 			return builder->CreateFCmpUGE(lhs, rhs, "cmptmp");
 		break;
 	}
+	default:
+		ASSERT(false);
 	}
-
-	if (instruction == (Instruction::BinaryOps)-1)
-		throw CompileError(sourceLine, "invalid binary operator");
 
 	return builder->CreateBinOp(instruction, lhs, rhs);
 }
@@ -664,7 +777,13 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		PROFILE_SCOPE("Generate function body");
 
 		for (auto& node : body)
-			node->Generate();
+		{
+			// todo: fix
+			// avoids llvm complaining about return in middle of block if there are multiple returns that would be hit
+			// also means an error wont be flagged after the first return so kinda dumb rn
+			if (llvm::isa<llvm::ReturnInst>(node->Generate()))
+				break;
+		}
 
 		if (!bodyBlock->getTerminator())
 		{
@@ -788,24 +907,37 @@ static void ResolveType(const std::string& name, Type& type)
 		type.raw = llvm::PointerType::get(contained->raw, 0u); // Magic address space of 0???
 		return;
 	}
+	else if (type.IsArray())
+	{
+		// []f32 -> f32
+		std::string elementName = std::string(name).erase(0, 2);
+		Type* elementType = Type::FindOrAdd(elementName);
+		ResolveType(elementName, *elementType);
+		type.raw = elementType->raw;
+		return;
+	}
 
 	switch (type.tag)
 	{
+		case TypeTag::UInt8:
 		case TypeTag::Int8:
 		{
 			type.raw = llvm::Type::getInt8Ty(*context);
 			break;
 		}
+		case TypeTag::UInt16:
 		case TypeTag::Int16:
 		{
 			type.raw = llvm::Type::getInt16Ty(*context);
 			break;
 		}
+		case TypeTag::UInt32:
 		case TypeTag::Int32:
 		{
 			type.raw = llvm::Type::getInt32Ty(*context);
 			break;
 		}
+		case TypeTag::UInt64:
 		case TypeTag::Int64:
 		{
 			type.raw = llvm::Type::getInt64Ty(*context);
@@ -900,6 +1032,14 @@ Type* Type::GetPointerTo() const
 	ResolveType(pointerTy->name, *pointerTy);
 
 	return pointerTy;
+}
+
+Type* Type::GetArrayTypeOf() const
+{
+	Type* arrayTy = FindOrAdd("[]" + name);
+	//ResolveType(arrayTy->name, *arrayTy);
+
+	return arrayTy;
 }
 
 static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)

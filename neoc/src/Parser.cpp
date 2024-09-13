@@ -133,6 +133,7 @@ static std::unique_ptr<Expression> ParseLoop();
 static std::unique_ptr<Expression> ParseLoopControlFlow();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
+static std::unique_ptr<Expression> ParseArrayInitializer(std::pair<Type*, std::unique_ptr<Expression>> typeAndFirstElement = { nullptr, nullptr }/*hate this*/);
 static std::unique_ptr<Expression> ParseCompoundStatement();
 static std::unique_ptr<Expression> ParsePrimaryExpression();
 static std::unique_ptr<Expression> ParseIdentifierExpression();
@@ -152,7 +153,8 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 		BinaryType type = GetBinaryType(token.type);
 		int newPriority = GetBinaryPriority(type);
 
-		if (newPriority == 0 || newPriority < priority) 
+		bool done = type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority; // tf
+		if (newPriority == 0 || done)
 			return left;
 
 		Advance();  // Through operator
@@ -191,6 +193,8 @@ static std::unique_ptr<Expression> ParseLine()
 
 	return expr;
 }
+
+static std::unique_ptr<Expression> ParseArrayDefinitionOrAccess();
 
 static std::unique_ptr<Expression> ParseUnaryExpression()
 {
@@ -268,6 +272,10 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		case TokenType::Decrement:
 			type = UnaryType::PostfixDecrement;
 			break;
+		case TokenType::LeftSquareBracket:
+		{
+			return ParseArrayDefinitionOrAccess();
+		}
 		default:
 			return ParsePrimaryExpression();
 		}
@@ -286,24 +294,6 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 
 	return ParsePrimaryExpression();
 }
-
-//static std::unique_ptr<Expression> ParseRangeExpression()
-//{
-//	sParsingRange = true;
-//
-//	auto range = MakeExpression<RangeExpression>();
-//	
-//	range->min = ParseExpression(-1);
-//
-//	Expect(TokenType::MiniEllipsis, "expected '..' for range expression");
-//
-//	range->max = ParseExpression(-1);
-//	range->type = range->min->type;
-//
-//	sParsingRange = false;
-//
-//	return range;
-//}
 
 static std::unique_ptr<Expression> ParsePrimaryExpression()
 {
@@ -367,7 +357,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			if (strnchr(token.start, '.', token.length))
 			{
 				primary->value.f64 = strtod(token.start, nullptr);
-				primary->type = Type::FindOrAdd(TypeTag::Float64); // Any floating point value is double by default???
+				primary->type = Type::FindOrAdd(TypeTag::Float32);
 			}
 			else
 			{
@@ -389,11 +379,17 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 
 			return primary;
 		}
+		case TokenType::LeftSquareBracket:
+			return ParseArrayInitializer();
 		case TokenType::LeftCurlyBracket:
 			return ParseCompoundStatement();
 		case TokenType::Const: // TODO: const after id
 		case TokenType::ID:
 		{
+			// Array initializer?
+			if (parser->lexer->nextToken.type == TokenType::LeftSquareBracket)
+				return ParseArrayInitializer();
+
 			return ParseIdentifierExpression();
 		}
 	}
@@ -418,6 +414,139 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	return node;
 }
 
+// Annoying cause we need
+// f32[0.0, 0.0]
+// and
+// arr_name[0]
+// to parse differently, so rn we just check how many expressions are in the square brackets
+static std::unique_ptr<Expression> ParseArrayDefinitionOrAccess()
+{
+	Token* token = &parser->current;
+
+	std::string typeOrVariableName = std::string(token->start, token->length);
+	Token operatorToken = parser->lexer->nextToken;
+
+	Advance(); // Through type / name
+	Advance();
+	auto indexOrFirstElement = ParseExpression(-1);
+
+	if (token->type == TokenType::Comma)
+	{
+		// Array definition (> 1 element)
+
+		return ParseArrayInitializer({Type::FindOrAdd(typeOrVariableName), std::move(indexOrFirstElement)});
+	}
+
+	auto expr = MakeExpression<ArrayAccessExpression>();
+	expr->unaryType = UnaryType::ArrayAccess;
+	expr->operatorToken = operatorToken;
+
+	expr->index = std::move(indexOrFirstElement);
+	
+	auto operand = MakeExpression<VariableAccessExpression>();
+	operand->name = typeOrVariableName;
+	expr->operand = std::move(operand);
+
+	Expect(TokenType::RightSquareBracket, "expected ']' after array index expresson");
+
+	return expr;
+}
+
+//static std::unique_ptr<Expression> ParseArrayInitializer(std::pair<Type*, std::unique_ptr<Expression>> typeAndFirstElement = { nullptr, nullptr }/*hate this*/)
+static std::unique_ptr<Expression> ParseArrayInitializer(std::pair<Type*, std::unique_ptr<Expression>> typeAndFirstElement/*hate this*/)
+{
+	PROFILE_FUNCTION();
+
+	auto array = MakeExpression<ArrayInitializationExpression>();
+
+	Token* token = &parser->current;
+	if (!typeAndFirstElement.first)
+	{
+		if (token->type == TokenType::ID)
+		{
+			// Gives us type
+			std::string typeName = std::string(token->start, token->length);
+			array->type = Type::FindOrAdd(typeName);
+
+			Advance();
+		}
+
+		Advance(); // through [
+	}
+	else
+	{
+		// f32[0.0, 0.0]
+		//       /|\
+		//        | 
+
+		Advance(); // through ,
+		array->elements.push_back(std::move(typeAndFirstElement.second));
+	}
+
+	while (token->type != TokenType::RightSquareBracket && token->type != TokenType::Eof)
+	{
+		array->elements.push_back(ParseExpression(-1));
+
+		if (token->type != TokenType::RightSquareBracket)
+			Expect(TokenType::Comma, "expected ',' to separate array elements");
+	}
+
+	Expect(TokenType::RightSquareBracket, "expected ']' to close array elements");
+
+	return array;
+}
+
+// expects array type   []x
+static std::unique_ptr<Expression> ParseArrayDefinition(VariableDefinitionExpression* definition)
+{
+	PROFILE_FUNCTION();
+
+	Token* token = &parser->current;
+	Advance();
+
+	auto array = MakeExpression<ArrayDefinitionExpression>();
+	array->definition = definition;
+
+	bool dynamic = false;
+	if (token->type == TokenType::MiniEllipsis)
+	{
+		// Dynamic array
+		dynamic = true;
+		Expect(TokenType::RightSquareBracket, "expected ']' after '..'");
+	}
+	else
+	{
+		// todo: constant variables
+		Token number = *token;
+		Expect(TokenType::Number, "expected number for capacity after '['");
+
+		if (strnchr(number.start, '.', number.length))
+			LogError("array capacity must be integer");
+
+		array->capacity = (uint64_t)strtoul(number.start, nullptr, 0);
+
+		//array->capacityExpr = ParseExpression(-1);
+		Expect(TokenType::RightSquareBracket, "expected ']' after expression");
+	}
+
+	Token typeToken = *token;
+	Expect(TokenType::ID, "expected identifier after ']'");
+	
+	// Get type
+	std::string typeName = std::string(typeToken.start, typeToken.length);
+	Type* elementType = Type::FindOrAdd(typeName);
+	array->type = elementType->GetArrayTypeOf();
+
+	// Initializer?
+	if (token->type == TokenType::Equal)
+	{
+		Advance();
+		array->initializer = ParseExpression(-1);
+	}
+
+	return array;
+}
+
 static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 {
 	PROFILE_FUNCTION();
@@ -429,7 +558,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	// TODO: use string view type shit or smth
 	std::string variableName = std::string(nameToken.start, nameToken.length);
 
-	auto variable = MakeExpression<VariableDefinitionStatement>();
+	auto variable = MakeExpression<VariableDefinitionExpression>();
 
 	variable->Name.start = nameToken.start;
 	variable->Name.length = nameToken.length;
@@ -447,13 +576,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	else // Mr. Programmer is kindly giving us the type
 	{
 		Token typeToken = Advance();
-
 		// TODO: modifiers
-		//if (typeToken.type == TokenType::Const)
-		//{
-		//	variable->modifiers.isConst = true;
-		//	typeToken = Advance(); // Through 'const'
-		//}
 
 		// Handle pointer type
 		uint32_t pointerDepth = 0;
@@ -464,10 +587,11 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		}
 
 		// Array!!!
-		//if (token->type == TokenType::LeftSquareBracket)
-		//{
-		//	
-		//}
+		if (token->type == TokenType::LeftSquareBracket)
+		{
+			variable->initializer = ParseArrayDefinition(variable.get());
+			return variable;
+		}
 
 		std::string typePrefix;
 		typePrefix.insert(typePrefix.begin(), pointerDepth, '*');
@@ -503,8 +627,8 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		auto parameter = ParseVariableDefinitionStatement();
 
 		// Cast to VariableDefinitionStatement
-		auto tmp = dynamic_cast<VariableDefinitionStatement*>(parameter.get());
-		std::unique_ptr<VariableDefinitionStatement> variable;
+		auto tmp = dynamic_cast<VariableDefinitionExpression*>(parameter.get());
+		std::unique_ptr<VariableDefinitionExpression> variable;
 		parameter.release();
 		variable.reset(tmp);
 
@@ -613,8 +737,8 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 		auto member = ParseVariableDefinitionStatement();
 
 		// Cast to VariableDefinitionStatement
-		auto tmp = dynamic_cast<VariableDefinitionStatement*>(member.get());
-		std::unique_ptr<VariableDefinitionStatement> variable;
+		auto tmp = dynamic_cast<VariableDefinitionExpression*>(member.get());
+		std::unique_ptr<VariableDefinitionExpression> variable;
 		member.release();
 		variable.reset(tmp);
 
@@ -714,8 +838,7 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 			Advance(); // To ::
 
 			// Type / function definition
-			Token next = parser->lexer->nextToken;
-			switch (next.type)
+			switch (next->type)
 			{
 				case TokenType::LeftParen:
 				{

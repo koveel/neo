@@ -6,12 +6,14 @@ enum class TypeTag
 
 	Void, Pointer,
 	// Integral
+	UInt8, UInt16, UInt32, UInt64,
 	Int8, Int16, Int32, Int64,
 	// Floatin' .
 	Float32, Float64,
 	Bool,
 	// Other!!!
 	String,
+	Array,
 	Struct,
 
 	COUNT,
@@ -30,12 +32,14 @@ public:
 	const std::string& GetName() const { return name; }
 
 	bool IsStruct() const { return tag == TypeTag::Struct; }
-	bool IsPointer() const { return name.size() > 0 && name[0] == '*'; }
+	bool IsArray() const { return tag == TypeTag::Array; }
+	bool IsPointer() const { return tag == TypeTag::Pointer; }
 
 	// De-pointerfy
 	Type* GetBaseType() const;
 	// Pointerfy
 	Type* GetPointerTo() const;
+	Type* GetArrayTypeOf() const;
 public:
 	static Type* FindOrAdd(const std::string& name);
 	static Type* FindOrAdd(TypeTag tag);
@@ -45,6 +49,7 @@ public:
 	TypeTag tag = TypeTag::Unresolved;
 	llvm::Type* raw = nullptr;
 
+	// Not good!
 	struct StructType
 	{
 		struct Member
@@ -55,6 +60,11 @@ public:
 
 		std::vector<Member> members;
 	} Struct;
+	struct ArrayType
+	{
+		uint64_t size = 0;
+		bool dynamic = false;
+	} Array;
 public:
 	static std::unordered_map<std::string, Type> RegisteredTypes;
 };

@@ -4,46 +4,45 @@
 
 std::unordered_map<std::string, Type> Type::RegisteredTypes;
  
+static const std::pair<TypeTag, const char*> TagToStringMap[] =
+{
+	{ TypeTag::Void,    "void",   },
+	{ TypeTag::UInt8,   "u8",     },
+	{ TypeTag::UInt16,  "u16",    },
+	{ TypeTag::UInt32,  "u32",    },
+	{ TypeTag::UInt64,  "u64",    },
+	{ TypeTag::Int8,    "i8",     },
+	{ TypeTag::Int16,   "i16",    },
+	{ TypeTag::Int32,   "i32",    },
+	{ TypeTag::Int64,   "i64",    },
+	{ TypeTag::Float32, "f32",    },
+	{ TypeTag::Float64, "f64",    },
+	{ TypeTag::String,  "string", },
+	{ TypeTag::Bool,    "bool",   },
+};
+
 const char* Type::TagToString(TypeTag tag)
 {
-	switch (tag)
+	for (const auto& pair : TagToStringMap)
 	{
-	case TypeTag::Void: return "void";
-	case TypeTag::Int8: return "i8";
-	case TypeTag::Int16: return "i16";
-	case TypeTag::Int32: return "i32";
-	case TypeTag::Int64: return "i64";
-	case TypeTag::Float32: return "f32";
-	case TypeTag::Float64: return "f64";
-	case TypeTag::String: return "string";
-	case TypeTag::Bool: return "bool";
+		if (pair.first == tag)
+			return pair.second;
 	}
 
-	return "";
+	ASSERT(false);
 }
 
 static TypeTag TagFromString(const char* str)
 {
 	if (str[0] == '*')
 		return TypeTag::Pointer;
+	if (str[0] == '[' && str[1] == ']')
+		return TypeTag::Array;
 
-	std::pair<const char*, TypeTag> pairs[] =
+	for (const auto& pair : TagToStringMap)
 	{
-		{ "void",   TypeTag::Void    },
-		{ "i8",     TypeTag::Int8    },
-		{ "i16",    TypeTag::Int16   },
-		{ "i32",    TypeTag::Int32   },
-		{ "i64",    TypeTag::Int64   },
-		{ "f32",    TypeTag::Float32 },
-		{ "f64",    TypeTag::Float64 },
-		{ "string", TypeTag::String  },
-		{ "bool",   TypeTag::Bool    },
-	};
-
-	for (const auto& pair : pairs)
-	{
-		if (strcmp(pair.first, str) == 0)
-			return pair.second;
+		if (strcmp(pair.second, str) == 0)
+			return pair.first;
 	}
 
 	return TypeTag::Unresolved;

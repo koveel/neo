@@ -75,12 +75,12 @@ static void DebugPrintNode(ASTNode* baseNode)
 		}
 		case NodeType::VariableDefinition:
 		{
-			DYN_CAST_TO(VariableDefinitionStatement);
+			DYN_CAST_TO(VariableDefinitionExpression);
 
 			if (node->type)
-				printf("[VariableDef %s]: \"%.*s\" isGlobal = %d, isConst = %d\n", node->type->GetName().c_str(), node->Name.length, node->Name.start, node->modifiers.isGlobal, node->modifiers.isConst);
+				printf("[VariableDef %s]: \"%.*s\"\n", node->type->GetName().c_str(), node->Name.length, node->Name.start);
 			else
-				printf("[VariableDef]: \"%.*s\" isGlobal = %d, isConst = %d\n", node->Name.length, node->Name.start, node->modifiers.isGlobal, node->modifiers.isConst);
+				printf("[VariableDef]: \"%.*s\"\n", node->Name.length, node->Name.start);
 			if (node->initializer)
 			{
 				indentation++;
@@ -225,7 +225,7 @@ int main(int argc, const char* argv[])
 #ifdef NEOC_DIST
 	if (argc == 1)
 	{
-		fprintf(stderr, "Usage: limec <path>\n");
+		fprintf(stderr, "Usage: neoc <path>\n");
 		return 1;
 	}
 
