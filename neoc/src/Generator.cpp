@@ -8,6 +8,8 @@
 #include "Scope.h"
 #include "PlatformUtils.h"
 
+#include <optional>
+
 // TODO:
 // struct member initialization
 // multi line variable def
@@ -30,6 +32,11 @@ static void Warn(int line, const std::string& message, Args&&... args)
 
 template<typename Expr>
 static Expr* To(std::unique_ptr<Expression>& expr)
+{
+	return dynamic_cast<Expr*>(expr.get());
+}
+template<typename Expr>
+static Expr* To(std::shared_ptr<Expression>& expr)
 {
 	return dynamic_cast<Expr*>(expr.get());
 }
@@ -66,10 +73,10 @@ static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expre
 	return builder->CreateLoad(generated);
 }
 
-static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
+static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 {
 	llvm::Type* type = value->getType();
-	if (auto unary = To<UnaryExpression>(expr))
+	if (auto unary = dynamic_cast<UnaryExpression*>(expr))
 	{
 		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
 			return value;
@@ -82,6 +89,11 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression
 		return value;
 
 	return builder->CreateLoad(value);
+}
+
+static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
+{
+	return LoadIfPointer(value, expr.get());
 }
 
 static llvm::Value* Get1NumericalConstant(llvm::Type* type)
@@ -310,7 +322,7 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 		value = builder->CreateAlloca(arrayTy);
 	}
 
-	sCurrentScope->AddValue(std::string(definition->Name.start, definition->Name.length), { type, value });
+	sCurrentScope->AddValue(definition->name, { type, value });
 	return value;
 }
 
@@ -336,6 +348,8 @@ llvm::Value* ArrayAccessExpression::Generate()
 	return elementPtr;
 }
 
+static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* structTy);
+
 llvm::Value* VariableDefinitionExpression::Generate()
 {
 	llvm::Value* initialVal = nullptr;
@@ -354,7 +368,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			{
 				auto arrayExpr = To<ArrayInitializationExpression>(initializer);
 				llvm::Value* array = arrayExpr->Generate();
-				sCurrentScope->AddValue(std::string(Name.start, Name.length), { type = arrayExpr->type, array });
+				sCurrentScope->AddValue(name, { type = arrayExpr->type, array });
 				return array;
 			}
 			case NodeType::Primary:
@@ -366,14 +380,19 @@ llvm::Value* VariableDefinitionExpression::Generate()
 		}
 
 		initialVal = initializer->Generate();
-		initialVal = LoadIfPointer(initialVal, initializer);
+		initialVal = LoadIfPointer(initialVal, initializer.get());
 
 		initializerType = initialVal->getType();
 		type = initializer->type;
 	}
 
+	// Alloc
 	llvm::Value* alloc = builder->CreateAlloca(type->raw);
-	sCurrentScope->AddValue(std::string(Name.start, Name.length), { type, alloc });
+	sCurrentScope->AddValue(name, { type, alloc });
+
+	// Initialize members if struct
+	if (type->IsStruct())
+		DefaultInitializeStructMembers(alloc, type);
 
 	if (!initialVal)
 		return alloc;
@@ -443,14 +462,14 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 	const std::string& targetMemberName = memberExpr->name;
 
 	// Find member index
-	const auto& members = objectType->Struct.members;
+	const auto& members = objectType->Struct.definition->members;
 	int memberIndex = -1;
 	for (uint32_t i = 0; i < members.size(); i++)
 	{
 		auto& member = members[i];
-		if (member.name == targetMemberName)
+		if (member->name == targetMemberName)
 		{
-			binary->type = member.type;
+			binary->type = member->type;
 			memberIndex = i;
 			break;
 		}
@@ -774,9 +793,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 	for (auto& arg : sCurrentFunction->args())
 	{
 		auto& parameter = prototype.Parameters[i++];
-
-		std::string name = std::string(parameter->Name.start, parameter->Name.length);
-		arg.setName(name);
+		arg.setName(parameter->name);
 
 		if (!hasBody)
 			continue;
@@ -784,7 +801,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		// Alloc arg
 		llvm::Value* alloc = builder->CreateAlloca(arg.getType());
 		builder->CreateStore(&arg, alloc);
-		sCurrentScope->AddValue(name, { parameter->type, alloc });
+		sCurrentScope->AddValue(parameter->name, { parameter->type, alloc });
 	}
 
 	// Gen body
@@ -866,6 +883,23 @@ llvm::Value* FunctionCallExpression::Generate()
 	return builder->CreateCall(function, argValues);
 }
 
+static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
+{
+	Type::StructType& structType = type->Struct;
+	StructDefinitionExpression* definition = structType.definition;
+
+	uint32_t i = 0;
+	for (auto& member : definition->members)
+	{
+		if (!member->initializer) // TODO: default initialize primitive types
+			continue;
+
+		llvm::Value* initialValue = member->initializer->Generate();
+		llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, i++);
+		builder->CreateStore(initialValue, memberPtr);
+	}
+}
+
 llvm::Value* StructDefinitionExpression::Generate()
 {
 	// We already resolved the struct type and its members but here we just flag an error if a member type if unresolved
@@ -877,38 +911,32 @@ llvm::Value* StructDefinitionExpression::Generate()
 			continue;
 
 		throw CompileError(vardef->sourceLine, "unresolved type '%s' for member '%s' in struct '%s'",
-			memberType->name.c_str(), std::string(vardef->Name.start, vardef->Name.length).c_str(), name.c_str());
+			memberType->name.c_str(), vardef->name.c_str(), name.c_str());
 	}
 
 	return nullptr;
 }
 
-Generator::Generator()
-{
-	context = std::make_unique<llvm::LLVMContext>();
-	module = std::make_unique<llvm::Module>(llvm::StringRef(), *context);
-	builder = std::make_unique<llvm::IRBuilder<>>(*context);
-}
-
-static void ResolveType(const std::string& name, Type& type)
+// Sets type.raw to proper llvm::Type
+static void ResolveType(const std::string& name, Type& type, int possibleSourceLine = -1)
 {
 	PROFILE_FUNCTION();
-
+	
 	// Already resolved?
 	if (type.raw)
 		return;
 
 	if (type.IsStruct())
 	{
-		auto& members = type.Struct.members;
+		auto& members = type.Struct.definition->members;
 
 		std::vector<llvm::Type*> memberTypes;
 		memberTypes.reserve(members.size());
 
 		for (auto& member : members)
 		{
-			ResolveType(member.type->name, *member.type);
-			memberTypes.push_back(member.type->raw);
+			ResolveType(member->type->name, *member->type, (int)type.Struct.definition->sourceLine);
+			memberTypes.push_back(member->type->raw);
 		}
 
 		type.raw = llvm::StructType::create(*context, memberTypes, name);
@@ -932,59 +960,61 @@ static void ResolveType(const std::string& name, Type& type)
 		type.raw = elementType->raw;
 		return;
 	}
-
+	else
 	switch (type.tag)
 	{
 		case TypeTag::UInt8:
 		case TypeTag::Int8:
 		{
 			type.raw = llvm::Type::getInt8Ty(*context);
-			break;
+			return;
 		}
 		case TypeTag::UInt16:
 		case TypeTag::Int16:
 		{
 			type.raw = llvm::Type::getInt16Ty(*context);
-			break;
+			return;
 		}
 		case TypeTag::UInt32:
 		case TypeTag::Int32:
 		{
 			type.raw = llvm::Type::getInt32Ty(*context);
-			break;
+			return;
 		}
 		case TypeTag::UInt64:
 		case TypeTag::Int64:
 		{
 			type.raw = llvm::Type::getInt64Ty(*context);
-			break;
+			return;
 		}
 		case TypeTag::Float32:
 		{
 			type.raw = llvm::Type::getFloatTy(*context);
-			break;
+			return;
 		}
 		case TypeTag::Float64:
 		{
 			type.raw = llvm::Type::getDoubleTy(*context);
-			break;
+			return;
 		}
 		case TypeTag::Bool:
 		{
 			type.raw = llvm::Type::getInt1Ty(*context);
-			break;
+			return;
 		}
 		case TypeTag::String:
 		{
 			type.raw = llvm::Type::getInt8PtrTy(*context);
-			break;
+			return;
 		}
 		case TypeTag::Void:
 		{
 			type.raw = llvm::Type::getVoidTy(*context);
-			break;
+			return;
 		}
-	}
+	} 
+
+	throw CompileError(possibleSourceLine, "unresolved type %s", type.name.c_str());
 }
 
 // todo: abstract?
@@ -1099,6 +1129,13 @@ static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)
 	modulePassManager.run(*module, moduleAnalysisManager);
 }
 
+Generator::Generator()
+{
+	context = std::make_unique<llvm::LLVMContext>();
+	module = std::make_unique<llvm::Module>(llvm::StringRef(), *context);
+	builder = std::make_unique<llvm::IRBuilder<>>(*context);
+}
+
 CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArguments& compilerArgs)
 {
 	PROFILE_FUNCTION();
@@ -1134,7 +1171,10 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 	{
 		result.Succeeded = false;
 		SetConsoleColor(12);
-		fprintf(stderr, "[line %d] error: %s\n", err.line, err.message.c_str());
+		if (err.line == -1)
+			fprintf(stderr, "error: %s\n", err.message.c_str());
+		else
+			fprintf(stderr, "[line %d] error: %s\n", err.line, err.message.c_str());
 		ResetConsoleColor();
 	}
 

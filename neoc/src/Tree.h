@@ -200,13 +200,9 @@ struct CompoundStatement : public Expression
 
 struct VariableDefinitionExpression : public Expression
 {
-	std::unique_ptr<Expression> initializer = nullptr;
-
-	struct
-	{
-		const char* start = nullptr;
-		uint32_t length = 0;
-	} Name;
+	std::string name;
+	std::shared_ptr<Expression> initializer = nullptr;
+	std::vector<std::string> succeedingDefinitionNames;
 
 	//struct Modifiers
 	//{

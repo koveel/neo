@@ -559,11 +559,23 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	std::string variableName = std::string(nameToken.start, nameToken.length);
 
 	auto variable = MakeExpression<VariableDefinitionExpression>();
-
-	variable->Name.start = nameToken.start;
-	variable->Name.length = nameToken.length;
+	variable->name = std::string(nameToken.start, nameToken.length);
 
 	Token* token = &parser->current;
+	if (token->type == TokenType::Comma)
+	{
+		// x, y: f32;
+		// x, y := 0.0;
+		// x := 0.0, y := 0.0;
+
+		Advance();
+		do
+		{
+			variable->succeedingDefinitionNames.emplace_back(token->start, token->length);
+			Advance();
+		} while (token->type == TokenType::Comma && token->type != TokenType::Colon && token->type != TokenType::WalrusTeeth && token->type != TokenType::Eof);
+	}
+
 	if (token->type == TokenType::WalrusTeeth) // Automatic type deduction
 	{
 		Advance(); // Through :=
@@ -572,6 +584,8 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		auto expression = ParseExpression(-1);
 		variable->type = expression->type;
 		variable->initializer = std::move(expression);
+
+		return variable;
 	}
 	else // Mr. Programmer is kindly giving us the type
 	{
@@ -728,7 +742,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 
 	structType = Type::FindOrAdd(structName);
 	structType->tag = TypeTag::Struct;
-	auto& structData = structType->Struct;
+	structType->Struct.definition = structure.get();
 
 	Expect(TokenType::LeftCurlyBracket, "expected '{' after 'struct'");
 
@@ -742,8 +756,16 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 		member.release();
 		variable.reset(tmp);
 
-		structData.members.push_back({ std::string(variable->Name.start, variable->Name.length), variable->type });
-		structure->members.push_back(std::move(variable));
+		// multi line type sh
+		for (const auto& name : variable->succeedingDefinitionNames)
+		{
+			auto var = MakeExpression<VariableDefinitionExpression>();
+			var->type = variable->type;
+			var->initializer = variable->initializer;
+			var->name = name;
+			structure->members.push_back(std::move(var));
+		}
+		structure->members.insert(structure->members.begin(), std::move(variable));
 
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}

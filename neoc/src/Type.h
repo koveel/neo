@@ -52,13 +52,14 @@ public:
 	// Not good!
 	struct StructType
 	{
-		struct Member
-		{
-			std::string name;
-			Type* type;
-		};
-
-		std::vector<Member> members;
+		struct StructDefinitionExpression* definition = nullptr;
+		//struct Member
+		//{
+		//	std::string name;
+		//	Type* type;
+		//};
+		//
+		//std::vector<Member> members;
 	} Struct;
 	struct ArrayType
 	{

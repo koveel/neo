@@ -78,9 +78,9 @@ static void DebugPrintNode(ASTNode* baseNode)
 			DYN_CAST_TO(VariableDefinitionExpression);
 
 			if (node->type)
-				printf("[VariableDef %s]: \"%.*s\"\n", node->type->GetName().c_str(), node->Name.length, node->Name.start);
+				printf("[VariableDef %s]: \"%s\"\n", node->type->GetName().c_str(), node->name.c_str());
 			else
-				printf("[VariableDef]: \"%.*s\"\n", node->Name.length, node->Name.start);
+				printf("[VariableDef]: \"%s\"\n", node->name.c_str());
 			if (node->initializer)
 			{
 				indentation++;
