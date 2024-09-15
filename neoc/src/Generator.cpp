@@ -3,7 +3,12 @@
 #include "Tree.h"
 #include "Generator.h"
 
-#include "llvm/Passes/PassBuilder.h"
+#include <llvm/IR/LLVMContext.h>
+#include <llvm/IR/IRBuilder.h>
+#include <llvm/IR/Verifier.h>
+#include <llvm/IR/Value.h>
+#include <llvm/IR/Type.h>
+#include <llvm/Passes/PassBuilder.h>
 
 #include "Scope.h"
 #include "PlatformUtils.h"
@@ -326,21 +331,21 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 	return value;
 }
 
-llvm::Value* ArrayAccessExpression::Generate()
+llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 {
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
 
-	llvm::Value* indexVal = LoadIfPointer(index->Generate(), index);
+	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(), binary->right);
 	if (!indexVal->getType()->isIntegerTy())
-		throw CompileError(sourceLine, "expected integer value for array index");
+		throw CompileError(binary->sourceLine, "expected integer value for array index");
 
-	llvm::Value* arrayPtr = operand->Generate(); // todo: check this shit
+	llvm::Value* arrayPtr = binary->left->Generate(); // todo: check this shit
 
 	// Should be doing this at the start of this function
-	if (!operand->type->IsArray())
-		throw CompileError(sourceLine, "expected target of array access [] to be of array type");
+	if (!binary->left->type->IsArray())
+		throw CompileError(binary->sourceLine, "expected target of array access [] to be of array type");
 
-	type = operand->type->GetBaseType();
+	binary->type = binary->left->type->GetBaseType();
 
 	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
 	llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
@@ -442,7 +447,7 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 	Type* objectType = FindNeoTypeFromLLVMType(objectValue->getType()->getContainedType(0));
 	ASSERT(objectType);
 
-	if (!objectType->IsStruct())
+	if (!objectType->IsStruct() && !objectType->IsArray())
 	{
 		// This is where u would have used -> instead of . (if I wanted that stupid feature)
 		if (objectType->IsPointer())
@@ -460,6 +465,13 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 		throw CompileError(binary->sourceLine, "expected variable access expression for rhs of member access");
 
 	const std::string& targetMemberName = memberExpr->name;
+	
+	// epic hardcoded array.size
+	if (objectType->IsArray() && targetMemberName == "size")
+	{
+		uint64_t size = objectType->raw->getArrayNumElements();
+		return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, size, false));
+	}
 
 	// Find member index
 	const auto& members = objectType->Struct.definition->members;
@@ -499,6 +511,8 @@ llvm::Value* BinaryExpression::Generate()
 
 	if (binaryType == BinaryType::MemberAccess)
 		return GenerateStructureMemberAccessExpression(this);
+	if (binaryType == BinaryType::Subscript)
+		return GenerateSubscriptExpression(this);
 
 	llvm::Value* lhs = left->Generate();
 	llvm::Value* rhs = right->Generate();
@@ -891,10 +905,11 @@ static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
 	uint32_t i = 0;
 	for (auto& member : definition->members)
 	{
-		if (!member->initializer) // TODO: default initialize primitive types
+		auto& init = member->initializer;
+		if (!init || init->nodeType == NodeType::ArrayDefinition || init->nodeType == NodeType::ArrayInitialize) // TODO: default initialize primitive types
 			continue;
 
-		llvm::Value* initialValue = member->initializer->Generate();
+		llvm::Value* initialValue = init->Generate();
 		llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, i++);
 		builder->CreateStore(initialValue, memberPtr);
 	}
@@ -957,7 +972,7 @@ static void ResolveType(const std::string& name, Type& type, int possibleSourceL
 		std::string elementName = std::string(name).erase(0, 2);
 		Type* elementType = Type::FindOrAdd(elementName);
 		ResolveType(elementName, *elementType);
-		type.raw = elementType->raw;
+		type.raw = llvm::ArrayType::get(elementType->raw, type.Array.size);
 		return;
 	}
 	else

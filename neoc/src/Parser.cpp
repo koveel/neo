@@ -79,6 +79,7 @@ static BinaryType GetBinaryType(TokenType type)
 
 		case TokenType::MiniEllipsis:      return BinaryType::Range;
 		case TokenType::Dot:               return BinaryType::MemberAccess;
+		case TokenType::LeftSquareBracket: return BinaryType::Subscript;
 	}
 
 	return (BinaryType)0;
@@ -92,11 +93,13 @@ static int GetBinaryPriority(BinaryType type)
 	{
 		case BinaryType::MemberAccess:
 			return 31;
+		case BinaryType::Subscript:
+			return 29;
 		case BinaryType::CompoundMul:
 		case BinaryType::Multiply:
 		case BinaryType::CompoundDiv:
 		case BinaryType::Divide:
-			return 30;
+			return 28;
 		case BinaryType::CompoundAdd:
 		case BinaryType::Add:
 		case BinaryType::CompoundSub:
@@ -166,11 +169,13 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 
 		binary->right = ParseExpression(newPriority);
 
+		if (type == BinaryType::Subscript)
+			Expect(TokenType::RightSquareBracket, "expected ']' after expression");
+
 		left = std::move(binary);
 	}
 }
 
- // Lowk down syndrome mode
 static std::unique_ptr<Expression> ParseLine()
 {
 	bool expectSemicolon = true;
@@ -272,10 +277,10 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		case TokenType::Decrement:
 			type = UnaryType::PostfixDecrement;
 			break;
-		case TokenType::LeftSquareBracket:
-		{
-			return ParseArrayDefinitionOrAccess();
-		}
+			//case TokenType::LeftSquareBracket:
+			//{
+			//	return ParseArrayDefinitionOrAccess();
+			//}
 		default:
 			return ParsePrimaryExpression();
 		}
@@ -386,10 +391,6 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		case TokenType::Const: // TODO: const after id
 		case TokenType::ID:
 		{
-			// Array initializer?
-			if (parser->lexer->nextToken.type == TokenType::LeftSquareBracket)
-				return ParseArrayInitializer();
-
 			return ParseIdentifierExpression();
 		}
 	}
@@ -437,19 +438,19 @@ static std::unique_ptr<Expression> ParseArrayDefinitionOrAccess()
 		return ParseArrayInitializer({Type::FindOrAdd(typeOrVariableName), std::move(indexOrFirstElement)});
 	}
 
-	auto expr = MakeExpression<ArrayAccessExpression>();
-	expr->unaryType = UnaryType::ArrayAccess;
-	expr->operatorToken = operatorToken;
+	//auto expr = MakeExpression<ArrayAccessExpression>();
+	//expr->unaryType = UnaryType::ArrayAccess;
+	//expr->operatorToken = operatorToken;
+	//
+	//expr->index = std::move(indexOrFirstElement);
+	//
+	//auto operand = MakeExpression<VariableAccessExpression>();
+	//operand->name = typeOrVariableName;
+	//expr->operand = std::move(operand);
+	//
+	//Expect(TokenType::RightSquareBracket, "expected ']' after array index expresson");
 
-	expr->index = std::move(indexOrFirstElement);
-	
-	auto operand = MakeExpression<VariableAccessExpression>();
-	operand->name = typeOrVariableName;
-	expr->operand = std::move(operand);
-
-	Expect(TokenType::RightSquareBracket, "expected ']' after array index expresson");
-
-	return expr;
+	return nullptr;
 }
 
 //static std::unique_ptr<Expression> ParseArrayInitializer(std::pair<Type*, std::unique_ptr<Expression>> typeAndFirstElement = { nullptr, nullptr }/*hate this*/)
@@ -536,6 +537,7 @@ static std::unique_ptr<Expression> ParseArrayDefinition(VariableDefinitionExpres
 	std::string typeName = std::string(typeToken.start, typeToken.length);
 	Type* elementType = Type::FindOrAdd(typeName);
 	array->type = elementType->GetArrayTypeOf();
+	array->type->Array.size = array->capacity;
 
 	// Initializer?
 	if (token->type == TokenType::Equal)
@@ -604,6 +606,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		if (token->type == TokenType::LeftSquareBracket)
 		{
 			variable->initializer = ParseArrayDefinition(variable.get());
+			variable->type = variable->initializer->type;
 			return variable;
 		}
 
@@ -696,9 +699,6 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		Expect(TokenType::RightCurlyBracket, "expected '}' to close function body");
 	}
 
-
-	// Success!
-
 	return function;
 }
 
@@ -765,7 +765,10 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 			var->name = name;
 			structure->members.push_back(std::move(var));
 		}
-		structure->members.insert(structure->members.begin(), std::move(variable));
+		if (variable->succeedingDefinitionNames.size())
+			structure->members.insert(structure->members.begin(), std::move(variable));
+		else
+			structure->members.push_back(std::move(variable));
 
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}
@@ -773,25 +776,6 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 	Expect(TokenType::RightCurlyBracket, "expected '}' to end struct definition");
 
 	return structure;
-}
-
-static std::unique_ptr<Expression> ParseStructMemberAccessExpression()
-{
-	Token* token = &parser->current;
-
-	auto node = MakeExpression<VariableAccessExpression>();
-	std::string identifierName = std::string(token->start, token->length);
-
-	Advance(); // To .
-	Advance(); // Through .
-
-	Token member = *token;
-	Expect(TokenType::ID, "expected identifier after '%s.'", identifierName.c_str());
-
-	std::string memberName = std::string(member.start, member.length);
-	node->name = identifierName + "." + memberName;
-
-	return node;
 }
 
 // break, continue

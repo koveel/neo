@@ -8,7 +8,9 @@ template<typename... Args>
 extern void LogError(const char* format, Args&&... args)
 {
 	Parser* parser = Parser::GetParser();
+	SetConsoleColor(12);
 	fprintf(stderr, "error (line %d): %s\n", parser->lexer->line, FormatString(format, std::forward<Args>(args)...).c_str());
+	ResetConsoleColor();
 	Parser::Panic();
 }
 

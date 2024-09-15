@@ -5,15 +5,17 @@
 #include <memory>
 #include <vector>
 #include <fstream>
-
-// llvm stuff
-#include <llvm/IR/LLVMContext.h>
-#include <llvm/IR/IRBuilder.h>
-#include <llvm/IR/Verifier.h>
-#include <llvm/IR/Value.h>
-#include <llvm/IR/Type.h>
+#include <unordered_map>
 
 // my stuff
+#include "PlatformUtils.h"
 #include "Utils.h"
 #include "Error.h"
 #include "Profiler.h"
+
+// Highk down syndrome mode
+namespace llvm
+{
+	class Type;
+	class Value;
+}

@@ -10,7 +10,7 @@ enum class NodeType
 	Primary, String,
 	Unary, Binary,
 	VariableDefinition, VariableAccess,
-	Branch, Loop, LoopControlFlow, Range, ArrayInitialize, ArrayAccess,
+	Branch, Loop, LoopControlFlow, Range, ArrayInitialize,
 	FunctionDefinition, FunctionCall, Return,
 	StructDefinition, ArrayDefinition,
 };
@@ -78,7 +78,6 @@ enum class UnaryType
 	Negate,
 	PrefixIncrement, PrefixDecrement,
 	PostfixIncrement, PostfixDecrement,
-	ArrayAccess,
 
 	AddressOf, Deref,
 };
@@ -112,6 +111,7 @@ enum class BinaryType
 	GreaterEqual,
 	Range, // ..
 	MemberAccess,
+	Subscript,
 
 	And, Or,
 };
@@ -245,20 +245,6 @@ struct ArrayDefinitionExpression : public Expression
 		: Expression(line)
 	{
 		nodeType = NodeType::ArrayDefinition;
-	}
-
-	llvm::Value* Generate() override;
-};
-
-// prob not necessary
-struct ArrayAccessExpression : public UnaryExpression
-{
-	std::unique_ptr<Expression> index;
-
-	ArrayAccessExpression(uint32_t line)
-		: UnaryExpression(line)
-	{
-		nodeType = NodeType::ArrayAccess;
 	}
 
 	llvm::Value* Generate() override;
