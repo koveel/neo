@@ -6,19 +6,23 @@
 #include <llvm/IR/LLVMContext.h>
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Verifier.h>
-#include <llvm/IR/Value.h>
-#include <llvm/IR/Type.h>
 #include <llvm/Passes/PassBuilder.h>
 
 #include "Scope.h"
 #include "PlatformUtils.h"
 
-#include <optional>
-
-// TODO:
-// struct member initialization
-// multi line variable def
-// struct aggregate initialization
+/* TODO:
+Default values for primitive types
+Functions:
+	Default parameters
+	Overloads
+	Var args
+	Multiple return values
+Enums
+Polymorphism
+Modules
+Reflection
+*/
 
 static std::unique_ptr<llvm::LLVMContext> context;
 static std::unique_ptr<llvm::IRBuilder<>> builder;
@@ -36,15 +40,18 @@ static void Warn(int line, const std::string& message, Args&&... args)
 }
 
 template<typename Expr>
-static Expr* To(std::unique_ptr<Expression>& expr)
+static Expr* To(Expression* expr)
 {
-	return dynamic_cast<Expr*>(expr.get());
+	if (expr->nodeType != Expr::GetNodeType())
+		return nullptr;
+
+	return static_cast<Expr*>(expr);
 }
 template<typename Expr>
-static Expr* To(std::shared_ptr<Expression>& expr)
-{
-	return dynamic_cast<Expr*>(expr.get());
-}
+static Expr* To(std::unique_ptr<Expression>& expr) { return To<Expr>(expr.get()); }
+
+template<typename Expr>
+static Expr* To(std::shared_ptr<Expression>&expr) { return To<Expr>(expr.get()); }
 
 static bool IsAlloca(llvm::Value* v)
 {
@@ -81,7 +88,7 @@ static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expre
 static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 {
 	llvm::Type* type = value->getType();
-	if (auto unary = dynamic_cast<UnaryExpression*>(expr))
+	if (auto unary = To<UnaryExpression>(expr))
 	{
 		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
 			return value;
@@ -354,11 +361,15 @@ llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 }
 
 static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* structTy);
+static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* structTy, CompoundStatement* initializer);
 
 llvm::Value* VariableDefinitionExpression::Generate()
 {
 	llvm::Value* initialVal = nullptr;
 	llvm::Type* initializerType = nullptr;
+
+	bool aggregateInitialization = false;
+	CompoundStatement* aggregateInitializer = nullptr;
 
 	if (initializer)
 	{
@@ -382,13 +393,23 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				primary->type = type;
 				break;
 			}
+			case NodeType::Compound:
+			{
+				// aggregate init
+				aggregateInitializer = To<CompoundStatement>(initializer);
+				aggregateInitialization = true;
+				break;
+			}
 		}
 
-		initialVal = initializer->Generate();
-		initialVal = LoadIfPointer(initialVal, initializer.get());
+		if (!aggregateInitialization)
+		{
+			initialVal = initializer->Generate();
+			initialVal = LoadIfPointer(initialVal, initializer.get());
 
-		initializerType = initialVal->getType();
-		type = initializer->type;
+			initializerType = initialVal->getType();
+			type = initializer->type;
+		}
 	}
 
 	// Alloc
@@ -397,7 +418,15 @@ llvm::Value* VariableDefinitionExpression::Generate()
 
 	// Initialize members if struct
 	if (type->IsStruct())
+	{
+		if (aggregateInitialization)
+		{
+			AggregateInitializeStructMembers(alloc, type, aggregateInitializer);
+			return alloc;
+		}
+		
 		DefaultInitializeStructMembers(alloc, type);
+	}
 
 	if (!initialVal)
 		return alloc;
@@ -915,6 +944,60 @@ static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
 	}
 }
 
+static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Type::StructType& type)
+{
+	StructDefinitionExpression* definition = type.definition;
+
+	uint32_t i = 0;
+	for (auto& member : definition->members)
+	{
+		if (targetMember == member->name)
+			return i;
+
+		i++;
+	}
+
+	return std::numeric_limits<uint32_t>::max();
+}
+
+static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* type, CompoundStatement* initializer)
+{
+	Type::StructType& structType = type->Struct;
+	StructDefinitionExpression* definition = structType.definition;
+
+	std::vector<uint32_t> initializedMembers;
+	initializedMembers.reserve(initializer->children.size());
+
+	for (auto& expr : initializer->children)
+	{
+		BinaryExpression* binary = nullptr;
+		if (!(binary = To<BinaryExpression>(expr)))
+			throw CompileError(expr->sourceLine, "expected binary expression for aggregate struct initialization");
+		if (binary->binaryType != BinaryType::Assign)
+			throw CompileError(expr->sourceLine, "expected member assignment for aggregate struct initialization");
+
+		// Why tf is concise binary a binary
+		BinaryExpression* conciseBinary = To<BinaryExpression>(binary->left);
+		ASSERT(conciseBinary);
+		if (conciseBinary->binaryType != BinaryType::ConciseMemberAccess)
+			throw CompileError(conciseBinary->sourceLine, "expected concise member access \".member\" for lhs of initializer");
+		VariableAccessExpression* variable = To<VariableAccessExpression>(conciseBinary->right);
+
+		uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, structType);
+		if (memberIndex == std::numeric_limits<uint32_t>::max())
+			throw CompileError(expr->sourceLine, "member '%s' doesn't exist in struct '%s'", variable->name.c_str(), type->name.c_str());
+		
+		if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
+			throw CompileError(expr->sourceLine, "member '%s' appears multiple times in aggregate initializer. can only assign to it once", variable->name.c_str());
+
+		initializedMembers.push_back(memberIndex);
+
+		llvm::Value* value = binary->right->Generate();
+		llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, memberIndex);
+		builder->CreateStore(value, memberPtr);
+	}
+}
+
 llvm::Value* StructDefinitionExpression::Generate()
 {
 	// We already resolved the struct type and its members but here we just flag an error if a member type if unresolved
@@ -1040,12 +1123,11 @@ static void VisitFunctionDefinitions(ParseResult& result)
 	// only works for top level functions rn
 	for (auto& node : result.Module->children)
 	{
-		if (node->nodeType != NodeType::FunctionDefinition)
+		FunctionDefinitionExpression* definition = nullptr;
+		if (!(definition = To<FunctionDefinitionExpression>(node)))
 			continue;
 
-		auto definition = dynamic_cast<FunctionDefinitionExpression*>(node.get());
 		FunctionPrototype& prototype = definition->prototype;
-
 		if (module->getFunction(prototype.Name))
 			throw CompileError(node->sourceLine, "redefinition of function '%s'", prototype.Name.c_str());
 

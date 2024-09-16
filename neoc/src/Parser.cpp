@@ -3,12 +3,7 @@
 #include "Tree.h"
 #include "Parser.h"
 
-#include <unordered_map>
-
 #include "PlatformUtils.h"
-
-// TODO: remove type checking, naming conflict checking, etc
-// do that during code gen not parsing
 
 static Parser* parser = nullptr;
 
@@ -93,6 +88,8 @@ static int GetBinaryPriority(BinaryType type)
 	{
 		case BinaryType::MemberAccess:
 			return 31;
+		case BinaryType::ConciseMemberAccess:
+			return 30;
 		case BinaryType::Subscript:
 			return 29;
 		case BinaryType::CompoundMul:
@@ -181,7 +178,6 @@ static std::unique_ptr<Expression> ParseLine()
 	bool expectSemicolon = true;
 	auto expr = ParseExpression(-1);
 
-	// Scuffed, dont come at me
 	switch (expr->nodeType)
 	{
 	case NodeType::Loop:
@@ -263,6 +259,23 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		auto unary = makeUnary(UnaryType::Deref);
 		return unary;
 	}
+	case TokenType::Dot:
+	{
+		// member access with no lhs
+		auto binary = MakeExpression<BinaryExpression>();
+		binary->binaryType = BinaryType::ConciseMemberAccess;
+		binary->operatorToken = *token;
+
+		Advance();
+
+		std::string memberName = std::string(token->start, token->length);
+		auto variable = MakeExpression<VariableAccessExpression>();
+		variable->name = memberName;
+
+		Advance(); // through name
+		binary->right = std::move(variable);
+		return binary;
+	}
 	case TokenType::ID:
 	{
 		// 	Handle any postfix unary operators (i++)
@@ -277,10 +290,6 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		case TokenType::Decrement:
 			type = UnaryType::PostfixDecrement;
 			break;
-			//case TokenType::LeftSquareBracket:
-			//{
-			//	return ParseArrayDefinitionOrAccess();
-			//}
 		default:
 			return ParsePrimaryExpression();
 		}
@@ -437,18 +446,6 @@ static std::unique_ptr<Expression> ParseArrayDefinitionOrAccess()
 
 		return ParseArrayInitializer({Type::FindOrAdd(typeOrVariableName), std::move(indexOrFirstElement)});
 	}
-
-	//auto expr = MakeExpression<ArrayAccessExpression>();
-	//expr->unaryType = UnaryType::ArrayAccess;
-	//expr->operatorToken = operatorToken;
-	//
-	//expr->index = std::move(indexOrFirstElement);
-	//
-	//auto operand = MakeExpression<VariableAccessExpression>();
-	//operand->name = typeOrVariableName;
-	//expr->operand = std::move(operand);
-	//
-	//Expect(TokenType::RightSquareBracket, "expected ']' after array index expresson");
 
 	return nullptr;
 }

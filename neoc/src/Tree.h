@@ -49,10 +49,11 @@ struct PrimaryExpression : public Expression
 	PrimaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Primary;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Primary; }
 };
 
 struct StringExpression : public Expression
@@ -66,10 +67,11 @@ struct StringExpression : public Expression
 	StringExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::String;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::String; }
 };
 
 enum class UnaryType
@@ -91,10 +93,11 @@ struct UnaryExpression : public Expression
 	UnaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Unary;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Unary; }
 };
 
 enum class BinaryType
@@ -110,7 +113,7 @@ enum class BinaryType
 	Greater,
 	GreaterEqual,
 	Range, // ..
-	MemberAccess,
+	MemberAccess, ConciseMemberAccess,
 	Subscript,
 
 	And, Or,
@@ -125,10 +128,11 @@ struct BinaryExpression : public Expression
 	BinaryExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Binary;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Binary; }
 };
 
 struct BranchExpression : public Expression
@@ -144,10 +148,11 @@ struct BranchExpression : public Expression
 	BranchExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Branch;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Branch; }
 };
 
 enum class LoopControlFlowType
@@ -163,10 +168,11 @@ struct LoopControlFlowExpression : public Expression
 	LoopControlFlowExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::LoopControlFlow;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate();
+	static NodeType GetNodeType() { return NodeType::LoopControlFlow; }
 };
 
 struct LoopExpression : public Expression
@@ -178,24 +184,26 @@ struct LoopExpression : public Expression
 	LoopExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Loop;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Loop; }
 };
 
 // Block of statements?? tf is this shit
 struct CompoundStatement : public Expression
 {
-	std::vector<std::unique_ptr<ASTNode>> children;
+	std::vector<std::unique_ptr<Expression>> children;
 
 	CompoundStatement(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Compound;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Compound; }
 };
 
 struct VariableDefinitionExpression : public Expression
@@ -212,10 +220,11 @@ struct VariableDefinitionExpression : public Expression
 	VariableDefinitionExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::VariableDefinition;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::VariableDefinition; }
 };
 
 // [x, y, z]
@@ -226,10 +235,11 @@ struct ArrayInitializationExpression : public Expression
 	ArrayInitializationExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::ArrayInitialize;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::ArrayInitialize; }
 };
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
@@ -244,10 +254,11 @@ struct ArrayDefinitionExpression : public Expression
 	ArrayDefinitionExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::ArrayDefinition;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::ArrayDefinition; }
 };
 
 struct VariableAccessExpression : public Expression
@@ -257,10 +268,11 @@ struct VariableAccessExpression : public Expression
 	VariableAccessExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::VariableAccess;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::VariableAccess; }
 };
 
 struct FunctionPrototype
@@ -278,10 +290,11 @@ struct FunctionDefinitionExpression : public Expression
 	FunctionDefinitionExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::FunctionDefinition;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::FunctionDefinition; }
 };
 
 struct FunctionCallExpression : public Expression
@@ -292,10 +305,11 @@ struct FunctionCallExpression : public Expression
 	FunctionCallExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::FunctionCall;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::FunctionCall; }
 };
 
 struct ReturnStatement : public Expression
@@ -305,10 +319,11 @@ struct ReturnStatement : public Expression
 	ReturnStatement(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::Return;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Return; }
 };
 
 struct StructDefinitionExpression : public Expression
@@ -319,8 +334,9 @@ struct StructDefinitionExpression : public Expression
 	StructDefinitionExpression(uint32_t line)
 		: Expression(line)
 	{
-		nodeType = NodeType::StructDefinition;
+		nodeType = GetNodeType();
 	}
 
 	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::StructDefinition; }
 };
