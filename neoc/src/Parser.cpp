@@ -646,7 +646,20 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		parameter.release();
 		variable.reset(tmp);
 
-		prototype.Parameters.push_back(std::move(variable));
+		// multi line type sh
+		for (const auto& name : variable->succeedingDefinitionNames)
+		{
+			auto param = MakeExpression<VariableDefinitionExpression>();
+			param->type = variable->type;
+			param->name = name;
+			//param->initializer = variable->initializer;
+
+			prototype.Parameters.push_back(std::move(param));
+		}
+		if (variable->succeedingDefinitionNames.size())
+			prototype.Parameters.insert(prototype.Parameters.begin(), std::move(variable));
+		else
+			prototype.Parameters.push_back(std::move(variable));
 
 		if (current->type != TokenType::RightParen)
 			Expect(TokenType::Comma, "expected ',' to separate function parameters");

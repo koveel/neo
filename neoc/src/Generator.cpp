@@ -425,7 +425,8 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			return alloc;
 		}
 		
-		DefaultInitializeStructMembers(alloc, type);
+		if (!initializer)
+			DefaultInitializeStructMembers(alloc, type);
 	}
 
 	if (!initialVal)
@@ -890,6 +891,19 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 llvm::Value* ReturnStatement::Generate()
 {
+	// In-place aggregate initialization
+	if (CompoundStatement* compound = To<CompoundStatement>(value))
+	{
+		type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
+
+		llvm::Value* structPtr = builder->CreateAlloca(type->raw);
+		AggregateInitializeStructMembers(structPtr, type, compound);
+
+		llvm::Value* loaded = builder->CreateLoad(structPtr);
+		return builder->CreateRet(loaded);
+	}
+
+	// Everything else
 	llvm::Value* generated = value->Generate();
 	generated = LoadIfVariable(generated, value);
 
@@ -907,6 +921,8 @@ llvm::Value* FunctionCallExpression::Generate()
 	if (function->arg_size() != arguments.size())
 		throw CompileError(sourceLine, "expected %d arguments for call to '%s' but got %d", function->arg_size(), name.c_str(), arguments.size());
 	
+	type = FindNeoTypeFromLLVMType(function->getReturnType());
+
 	std::vector<llvm::Value*> argValues;
 	uint32_t i = 0;
 	for (auto& expr : arguments)
@@ -928,6 +944,8 @@ llvm::Value* FunctionCallExpression::Generate()
 
 static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
 {
+	PROFILE_FUNCTION();
+
 	Type::StructType& structType = type->Struct;
 	StructDefinitionExpression* definition = structType.definition;
 
@@ -962,6 +980,8 @@ static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Type::
 
 static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* type, CompoundStatement* initializer)
 {
+	PROFILE_FUNCTION();
+
 	Type::StructType& structType = type->Struct;
 	StructDefinitionExpression* definition = structType.definition;
 
@@ -992,7 +1012,7 @@ static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* type,
 
 		initializedMembers.push_back(memberIndex);
 
-		llvm::Value* value = binary->right->Generate();
+		llvm::Value* value = LoadIfVariable(binary->right->Generate(), binary->right);
 		llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, memberIndex);
 		builder->CreateStore(value, memberPtr);
 	}
@@ -1192,9 +1212,9 @@ Type* Type::GetArrayTypeOf() const
 
 static void DoOptimizationPasses(const CommandLineArguments& compilerArgs)
 {
-	using namespace llvm;
-
 	PROFILE_FUNCTION();
+
+	using namespace llvm;
 
 	PassBuilder passBuilder;
 
