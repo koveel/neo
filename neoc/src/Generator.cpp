@@ -12,7 +12,8 @@
 #include "PlatformUtils.h"
 
 /* TODO:
-Default values for primitive types
+Array iteration
+
 Functions:
 	Default parameters
 	Overloads
@@ -53,11 +54,6 @@ static Expr* To(std::unique_ptr<Expression>& expr) { return To<Expr>(expr.get())
 template<typename Expr>
 static Expr* To(std::shared_ptr<Expression>&expr) { return To<Expr>(expr.get()); }
 
-static bool IsAlloca(llvm::Value* v)
-{
-	return llvm::isa<llvm::AllocaInst>(v);
-}
-
 static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
 {
 	if (expr->nodeType != NodeType::Binary)
@@ -79,7 +75,7 @@ static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expre
 			return generated;
 	}
 
-	if (!IsAlloca(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
+	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
 
 	return builder->CreateLoad(generated);
@@ -108,19 +104,19 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression
 	return LoadIfPointer(value, expr.get());
 }
 
-static llvm::Value* Get1NumericalConstant(llvm::Type* type)
+static llvm::Value* GetNumericalConstant(llvm::Type* type, uint64_t value = 1)
 {
 	switch (type->getTypeID())
 	{
 	case llvm::Type::IntegerTyID:
 	{
 		bool isSigned = (bool)llvm::cast<llvm::IntegerType>(type)->getSignBit();
-		return llvm::ConstantInt::get(*context, llvm::APInt(type->getIntegerBitWidth(), 1, isSigned));
+		return llvm::ConstantInt::get(*context, llvm::APInt(type->getIntegerBitWidth(), value, isSigned));
 	}
 	case llvm::Type::FloatTyID:
-		return llvm::ConstantFP::get(*context, llvm::APFloat(1.0f));
+		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value));
 	case llvm::Type::DoubleTyID:
-		return llvm::ConstantFP::get(*context, llvm::APFloat(1.0));
+		return llvm::ConstantFP::get(*context, llvm::APFloat((double)value));
 	}
 }
 
@@ -164,7 +160,6 @@ llvm::Value* PrimaryExpression::Generate()
 	}
 
 	throw CompileError(sourceLine, "invalid type for primary expression");
-	return nullptr;
 }
 
 llvm::Value* StringExpression::Generate()
@@ -207,7 +202,8 @@ llvm::Value* UnaryExpression::Generate()
 	{
 	case UnaryType::Not: // !value
 	{
-		return builder->CreateNot(value, "not_tmp");
+		value = LoadIfVariable(value, operand);
+		return builder->CreateNot(value);
 	}
 	case UnaryType::Negate: // -value
 	{
@@ -217,21 +213,19 @@ llvm::Value* UnaryExpression::Generate()
 		switch (valueType->getTypeID())
 		{
 		case llvm::Type::IntegerTyID:
-			return builder->CreateNeg(value, "negtmp");
+			return builder->CreateNeg(value);
 		case llvm::Type::FloatTyID:
 		case llvm::Type::DoubleTyID:
-			return builder->CreateFNeg(value, "fnegtmp");
+			return builder->CreateFNeg(value);
 		}
 
 		throw CompileError(sourceLine, "invalid operand for unary negation (-), operand must be numeric");
-
-		break;
 	}
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
 		llvm::Value* loaded = builder->CreateLoad(value);
-		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType())), value);
+		builder->CreateStore(builder->CreateAdd(loaded, GetNumericalConstant(loaded->getType())), value);
 
 		// Return newly incremented value
 		return builder->CreateLoad(value);
@@ -240,7 +234,7 @@ llvm::Value* UnaryExpression::Generate()
 	{
 		// Increment
 		llvm::Value* loaded = builder->CreateLoad(value);
-		builder->CreateStore(builder->CreateAdd(loaded, Get1NumericalConstant(loaded->getType())), value);
+		builder->CreateStore(builder->CreateAdd(loaded, GetNumericalConstant(loaded->getType())), value);
 
 		// Return value before increment
 		return loaded;
@@ -248,14 +242,14 @@ llvm::Value* UnaryExpression::Generate()
 	case UnaryType::PrefixDecrement:
 	{
 		llvm::Value* loaded = builder->CreateLoad(value);
-		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType())), value);
+		builder->CreateStore(builder->CreateSub(loaded, GetNumericalConstant(loaded->getType())), value);
 
 		return builder->CreateLoad(value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
 		llvm::Value* loaded = builder->CreateLoad(value);
-		builder->CreateStore(builder->CreateSub(loaded, Get1NumericalConstant(loaded->getType())), value);
+		builder->CreateStore(builder->CreateSub(loaded, GetNumericalConstant(loaded->getType())), value);
 
 		return loaded;
 	}
@@ -281,8 +275,8 @@ llvm::Value* ArrayInitializationExpression::Generate()
 	values.reserve(elements.size());
 
 	uint64_t i = 0;
-
-	llvm::Type* elementType = type ? type->raw : nullptr;
+	
+	llvm::Type* elementType = type ? type->GetBaseType()->raw : nullptr;
 	for (auto& expr : elements)
 	{
 		llvm::Value* element = expr->Generate();
@@ -292,7 +286,6 @@ llvm::Value* ArrayInitializationExpression::Generate()
 
 		if (!elementType)
 		{
-			type = expr->type->GetArrayTypeOf();
 			elementType = element->getType();
 		}
 
@@ -338,6 +331,19 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 	return value;
 }
 
+// returns ptr
+static llvm::Value* GetArrayElement(llvm::Value* arrayPtr, llvm::Value* index)
+{
+	static llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
+
+	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
+	return builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, index });
+}
+static llvm::Value* GetArrayElement(llvm::Value* arrayPtr, uint64_t index)
+{
+	return GetArrayElement(arrayPtr, llvm::ConstantInt::get(*context, llvm::APInt(32, index, false)));
+}
+
 llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 {
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
@@ -355,9 +361,7 @@ llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 	binary->type = binary->left->type->GetBaseType();
 
 	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
-	llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
-
-	return elementPtr;
+	return builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
 }
 
 static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* structTy);
@@ -430,7 +434,12 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	}
 
 	if (!initialVal)
-		return alloc;
+	{
+		if (type->IsPointer())
+			initialVal = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
+		else
+			initialVal = GetNumericalConstant(type->raw, 0);
+	}
 
 	builder->CreateStore(initialVal, alloc);
 	return alloc;
@@ -718,6 +727,8 @@ llvm::Value* BranchExpression::Generate()
 
 llvm::Value* LoopControlFlowExpression::Generate()
 {
+	// TODO
+
 	return nullptr;
 }
 
@@ -725,27 +736,64 @@ llvm::Value* LoopExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	BinaryExpression* rangeOperand = nullptr;
-	if (!IsRange(range, &rangeOperand))
-		throw CompileError(sourceLine, "expected range expression for loop");
+	llvm::Type* indexType = llvm::Type::getInt64Ty(*context);
+	llvm::Type* arrayType = nullptr;
+	llvm::Value* arrayPtr = nullptr;
 
-	auto minimum = rangeOperand->left->Generate();
-	auto maximum = rangeOperand->right->Generate();
-
-	// If reading variable, treat it as underlying value so the compiler does compiler stuff.
-	minimum = LoadIfVariable(minimum, rangeOperand->left);
-	maximum = LoadIfVariable(maximum, rangeOperand->right);
+	Type* iteratorType = range->type;
+	llvm::Value* indexValuePtr = builder->CreateAlloca(indexType);
+	llvm::Value* maximumIndex = nullptr;
+	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
 
 	sCurrentScope = sCurrentScope->Deepen();
 
-	// Create iterator variable
-	llvm::Value* iteratorValuePtr = builder->CreateAlloca(minimum->getType());
+	bool iteratingArray = false;
+	BinaryExpression* rangeOperand = nullptr;
+	if (!IsRange(range, &rangeOperand))
 	{
-		sCurrentScope->AddValue(iteratorVariableName, { rangeOperand->left->type, iteratorValuePtr });
-		// Starts at the range's minimum
-		builder->CreateStore(minimum, iteratorValuePtr);
+		arrayPtr = range->Generate();
+		arrayType = arrayPtr->getType()->getContainedType(0);
+
+		if (!arrayType->isArrayTy())
+			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
+		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), llvm::APInt(64, arrayType->getArrayNumElements(), false));
+
+		iteratorType = range->type->GetBaseType();
+
+		// Init iterator
+		iteratorValuePtr = builder->CreateAlloca(arrayType->getArrayElementType());
+
+		// gep
+		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, 0, false));
+		llvm::Value* initialValue = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
+		initialValue = builder->CreateLoad(initialValue);
+		builder->CreateStore(initialValue, iteratorValuePtr);
+
+		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(64, 0, false));
+		builder->CreateStore(zero, indexValuePtr);
+
+		iteratingArray = true;
+
+		sCurrentScope->AddValue(iteratorVariableName, { iteratorType, iteratorValuePtr });
+	}
+	else
+	{
+		auto minimum = rangeOperand->left->Generate();
+		auto maximum = rangeOperand->right->Generate();
+
+		// If reading variable, treat it as underlying value so the compiler does compiler stuff.
+		minimum = LoadIfVariable(minimum, rangeOperand->left);
+		maximum = LoadIfVariable(maximum, rangeOperand->right);
+		maximumIndex = maximum;
+
+		iteratorType = rangeOperand->left->type;
+		builder->CreateStore(minimum, indexValuePtr);
+
+		sCurrentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
 	}
 
+
+	// Blocks
 	llvm::BasicBlock* parentBlock = builder->GetInsertBlock();
 	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "for_end", sCurrentFunction);
 
@@ -759,23 +807,25 @@ llvm::Value* LoopExpression::Generate()
 	{
 		llvm::Value* bShouldContinue = nullptr;
 
-		llvm::Value* iteratorVal = builder->CreateLoad(iteratorValuePtr);
+		llvm::Value* iteratorVal = builder->CreateLoad(indexValuePtr);
 		llvm::Type* iteratorType = iteratorVal->getType();
 
+		bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximumIndex);
+
 		// TODO: abstract
-		switch (iteratorType->getTypeID())
-		{
-			case llvm::Type::IntegerTyID:
-			{
-				bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximum);
-				break;
-			}
-			case llvm::Type::FloatTyID:
-			{
-				bShouldContinue = builder->CreateFCmpULE(iteratorVal, maximum);
-				break;
-			}
-		}
+		//switch (iteratorType->getTypeID())
+		//{
+		//	case llvm::Type::IntegerTyID:
+		//	{
+		//		bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximum);
+		//		break;
+		//	}
+		//	case llvm::Type::FloatTyID:
+		//	{
+		//		bShouldContinue = builder->CreateFCmpULE(iteratorVal, maximum);
+		//		break;
+		//	}
+		//}
 
 		builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
 	}
@@ -785,8 +835,8 @@ llvm::Value* LoopExpression::Generate()
 	//	Jump to condition block
 	builder->SetInsertPoint(incrementBlock);
 	{
-		llvm::Value* iteratorVal = builder->CreateLoad(iteratorValuePtr);
-		builder->CreateStore(builder->CreateAdd(iteratorVal, Get1NumericalConstant(iteratorVal->getType()), "inc"), iteratorValuePtr);
+		llvm::Value* iteratorVal = builder->CreateLoad(indexValuePtr);
+		builder->CreateStore(builder->CreateAdd(iteratorVal, GetNumericalConstant(iteratorVal->getType()), "inc"), indexValuePtr);
 		builder->CreateBr(conditionBlock);
 	}
 
@@ -795,6 +845,13 @@ llvm::Value* LoopExpression::Generate()
 	//	Jump to increment block
 	builder->SetInsertPoint(bodyBlock);
 	{
+		if (iteratingArray)
+		{
+			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, 0, false));
+			llvm::Value* currentElementPtr = builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, builder->CreateLoad(indexValuePtr) });
+			builder->CreateStore(builder->CreateLoad(currentElementPtr), iteratorValuePtr);
+		}
+
 		for (auto& expr : body)
 			expr->Generate();
 
