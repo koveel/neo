@@ -120,9 +120,13 @@ static int GetBinaryPriority(BinaryType type)
 	return 0;
 }
 
+static uint32_t MadeExpressionsCount = 0;
+
 template<typename T = Expression, typename = std::enable_if<std::is_base_of_v<Expression, T>>>
 static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 {
+	MadeExpressionsCount++;
+
 	auto expression = std::make_unique<T>(parser->lexer->line);
 	expression->type = type;
 
@@ -198,34 +202,38 @@ static std::unique_ptr<Expression> ParseLine()
 static Type* ParseType()
 {
 	Token* token = &parser->current;
-	
-	std::string typePrefix; // Type system built off strings cause im mentally disabled
-	while ((token->type == TokenType::Star || token->type == TokenType::LeftSquareBracket) && token->type != TokenType::ID)
-	{
-		// Pointer?
-		while (token->type == TokenType::Star)
-		{
-			typePrefix += '*';
-		}
 
-		// Array!!!
+	// **i32
+	// *[4]i32
+	// f32
+	// []f32
+
+	while (token->type != TokenType::ID && token->type != TokenType::Eof)
+	{
+		Token prev = *token;
+		if (token->type == TokenType::Star)
+		{
+			Advance();
+			std::string containedTyName = std::string(token->start, token->length);
+			return Type::Get(TypeTag::Pointer, ParseType());
+		}
 		if (token->type == TokenType::LeftSquareBracket)
 		{
-			typePrefix += "[]";
 			Advance();
+			
+			prev = *token;
+			Expect(TokenType::Number, "expected number for array capacity (after '[')");
+			uint64_t capacity = (uint64_t)strtoul(prev.start, nullptr, 0);
+			Expect(TokenType::RightSquareBracket, "expected ']' after capacity");
+
+			return ArrayType::Get(ParseType(), capacity);
 		}
-
-		Advance();
-	}
-	if (typePrefix.empty() && token->type != TokenType::ID)
-	{
-		LogError("expected identifier for type name");
-		return nullptr;
 	}
 
-	Token name = *token;
+	std::string typeName = { token->start, token->length };
 	Advance();
-	return Type::FindOrAdd(typePrefix + std::string(name.start, name.length));
+
+	return Type::Get(typeName);
 }
 
 static std::unique_ptr<Expression> ParseUnaryExpression()
@@ -245,14 +253,14 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	}
 
 	// For convenience
-	auto makeUnary = [token](UnaryType type) -> std::unique_ptr<Expression>
+	auto makeUnary = [token](UnaryType type, int priority = -1) -> std::unique_ptr<Expression>
 	{
 		auto unary = MakeExpression<UnaryExpression>();
 		unary->operatorToken = *token;
 		unary->unaryType = type;
 
 		Advance(); // To operand
-		unary->operand = ParseExpression(-1);
+		unary->operand = ParseExpression(priority);
 		unary->type = unary->operand->type;
 
 		return unary;
@@ -287,7 +295,7 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	}
 	case TokenType::Star:
 	{
-		auto unary = makeUnary(UnaryType::Deref);
+		auto unary = makeUnary(UnaryType::Deref, 28);
 		return unary;
 	}
 	case TokenType::Dot:
@@ -352,7 +360,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		{
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.ip64 = nullptr;
-			primary->type = Type::FindOrAdd(TypeTag::Pointer);
+			primary->type = Type::Get(TypeTag::Pointer);
 			return primary;
 		}
 		case TokenType::Return:
@@ -374,7 +382,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.b32 = true;
-			primary->type = Type::FindOrAdd(TypeTag::Bool);
+			primary->type = Type::Get(TypeTag::Bool);
 
 			return primary;
 		}
@@ -384,7 +392,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.b32 = false;
-			primary->type = Type::FindOrAdd(TypeTag::Bool);
+			primary->type = Type::Get(TypeTag::Bool);
 
 			return primary;
 		}
@@ -402,12 +410,12 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			if (strnchr(token.start, '.', token.length))
 			{
 				primary->value.f64 = strtod(token.start, nullptr);
-				primary->type = Type::FindOrAdd(TypeTag::Float32);
+				primary->type = Type::Get(TypeTag::Float32);
 			}
 			else
 			{
 				primary->value.i64 = (int64_t)strtol(token.start, nullptr, 0);
-				primary->type = Type::FindOrAdd(TypeTag::Int32);
+				primary->type = Type::Get(TypeTag::Int32);
 			}
 			
 			return primary;
@@ -417,7 +425,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			Advance();
 
 			auto primary = MakeExpression<StringExpression>();
-			primary->type = Type::FindOrAdd(TypeTag::String);
+			primary->type = Type::Get(TypeTag::String);
 
 			primary->value.start = token.start;
 			primary->value.length = token.length;
@@ -464,10 +472,8 @@ static std::unique_ptr<Expression> ParseArrayInitializer()
 
 	Token* token = &parser->current;
 
-	std::string typeName = std::string(token->start, token->length);
-	array->type = Type::FindOrAdd(typeName)->GetArrayTypeOf();
+	Type* elementType = ParseType();
 
-	Advance(); // through type
 	Advance(); // through [
 
 	while (token->type != TokenType::RightSquareBracket && token->type != TokenType::Eof)
@@ -477,6 +483,8 @@ static std::unique_ptr<Expression> ParseArrayInitializer()
 		if (token->type != TokenType::RightSquareBracket)
 			Expect(TokenType::Comma, "expected ',' to separate array elements");
 	}
+
+	array->type = ArrayType::Get(elementType, array->elements.size());
 
 	Expect(TokenType::RightSquareBracket, "expected ']' to close array elements");
 
@@ -521,9 +529,9 @@ static std::unique_ptr<Expression> ParseArrayDefinition(VariableDefinitionExpres
 	
 	// Get type
 	std::string typeName = std::string(typeToken.start, typeToken.length);
-	Type* elementType = Type::FindOrAdd(typeName);
-	array->type = elementType->GetArrayTypeOf();
-	array->type->Array.size = array->capacity;
+	Type* elementType = Type::Get(typeName);
+	ArrayType* type = ArrayType::Get(elementType, array->capacity);
+	array->type = type;
 
 	// Initializer?
 	if (token->type == TokenType::Equal)
@@ -608,7 +616,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 	auto function = MakeExpression<FunctionDefinitionExpression>();
 	FunctionPrototype& prototype = function->prototype;
 	prototype.Name = functionName;
-	prototype.ReturnType = Type::FindOrAdd(TypeTag::Void);
+	prototype.ReturnType = Type::Get(TypeTag::Void);
 
 	while (current->type != TokenType::RightParen && current->type != TokenType::Eof)
 	{
@@ -716,13 +724,10 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 	Advance(); // Through struct
 	
 	auto structure = MakeExpression<StructDefinitionExpression>();
-	auto structType = structure->type;
-
 	structure->name = structName;
 
-	structType = Type::FindOrAdd(structName);
-	structType->tag = TypeTag::Struct;
-	structType->Struct.definition = structure.get();
+	StructType* type = StructType::Get(structName);
+	structure->type = type;
 
 	Expect(TokenType::LeftCurlyBracket, "expected '{' after 'struct'");
 
@@ -1042,6 +1047,8 @@ ParseResult Parser::Parse(Lexer* lexer)
 	{
 		fprintf(stderr, "fatal parse error - compilation stopped\n");
 	}
+
+	printf("generated %d expressions\n", MadeExpressionsCount);
 
 	return result;
 }

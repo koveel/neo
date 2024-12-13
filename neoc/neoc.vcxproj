@@ -124,6 +124,7 @@
     <ClCompile Include="src\Lexer.cpp" />
     <ClCompile Include="src\Parser.cpp" />
     <ClCompile Include="src\PlatformUtils.cpp" />
+    <ClCompile Include="src\TreeTypeResolve.cpp" />
     <ClCompile Include="src\Type.cpp" />
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>

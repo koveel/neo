@@ -3,6 +3,8 @@
 #include "Lexer.h"
 #include "Type.h"
 
+class llvm::Value;
+
 enum class NodeType
 {
 	Default = 1,
@@ -15,14 +17,13 @@ enum class NodeType
 	StructDefinition, ArrayDefinition,
 };
 
-class llvm::Value;
-
 struct ASTNode
 {
 	uint32_t sourceLine = 0;
 	NodeType nodeType = NodeType::Default;
 
 	virtual llvm::Value* Generate() { return nullptr; }
+	virtual void ResolveType() {}
 };
 
 struct Expression : public ASTNode
@@ -98,6 +99,8 @@ struct UnaryExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::Unary; }
+
+	void ResolveType() override;
 };
 
 enum class BinaryType
@@ -133,6 +136,8 @@ struct BinaryExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::Binary; }
+
+	void ResolveType() override;
 };
 
 struct BranchExpression : public Expression
@@ -204,6 +209,8 @@ struct CompoundStatement : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::Compound; }
+
+	void ResolveType() override;
 };
 
 struct VariableDefinitionExpression : public Expression
@@ -211,11 +218,6 @@ struct VariableDefinitionExpression : public Expression
 	std::string name;
 	std::shared_ptr<Expression> initializer = nullptr;
 	std::vector<std::string> succeedingDefinitionNames;
-
-	//struct Modifiers
-	//{
-	//	bool isGlobal = false, isConst = false;
-	//} modifiers;
 
 	VariableDefinitionExpression(uint32_t line)
 		: Expression(line)
@@ -225,6 +227,8 @@ struct VariableDefinitionExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::VariableDefinition; }
+
+	void ResolveType() override;
 };
 
 // [x, y, z]
@@ -240,6 +244,8 @@ struct ArrayInitializationExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::ArrayInitialize; }
+
+	void ResolveType() override;
 };
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
@@ -259,6 +265,8 @@ struct ArrayDefinitionExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::ArrayDefinition; }
+
+	void ResolveType() override;
 };
 
 struct VariableAccessExpression : public Expression
@@ -273,6 +281,8 @@ struct VariableAccessExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::VariableAccess; }
+
+	void ResolveType() override;
 };
 
 struct FunctionPrototype
@@ -285,7 +295,7 @@ struct FunctionPrototype
 struct FunctionDefinitionExpression : public Expression
 {
 	FunctionPrototype prototype;
-	std::vector<std::unique_ptr<ASTNode>> body;
+	std::vector<std::unique_ptr<Expression>> body;
 
 	FunctionDefinitionExpression(uint32_t line)
 		: Expression(line)
@@ -295,6 +305,8 @@ struct FunctionDefinitionExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::FunctionDefinition; }
+
+	void ResolveType() override;
 };
 
 struct FunctionCallExpression : public Expression
@@ -310,6 +322,8 @@ struct FunctionCallExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::FunctionCall; }
+
+	void ResolveType() override;
 };
 
 struct ReturnStatement : public Expression
@@ -324,6 +338,8 @@ struct ReturnStatement : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::Return; }
+
+	void ResolveType() override;
 };
 
 struct StructDefinitionExpression : public Expression

@@ -2,7 +2,9 @@
 
 #include "Type.h"
 
-std::unordered_map<std::string, Type> Type::RegisteredTypes;
+std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
+std::unordered_map<std::string, StructType*> StructType::RegisteredTypes;
+std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
  
 static const std::pair<TypeTag, const char*> TagToStringMap[] =
 {
@@ -21,8 +23,13 @@ static const std::pair<TypeTag, const char*> TagToStringMap[] =
 	{ TypeTag::Bool,    "bool",   },
 };
 
-const char* Type::TagToString(TypeTag tag)
+std::string Type::TagToString(TypeTag tag, Type* type)
 {
+	if (tag == TypeTag::Pointer)
+		return "*" + type->contained->GetName();
+	if (ArrayType* arrayType = type->IsArray())
+		return FormatString("[%d]%s", arrayType->count, arrayType->contained->GetName().c_str());
+
 	for (const auto& pair : TagToStringMap)
 	{
 		if (pair.first == tag)
@@ -30,6 +37,12 @@ const char* Type::TagToString(TypeTag tag)
 	}
 
 	ASSERT(false);
+}
+
+static Type* Add(const Type::Key& key)
+{
+	// TODO: free
+	return Type::RegisteredTypes[key] = new Type(key);
 }
 
 static TypeTag TagFromString(const char* str)
@@ -48,31 +61,50 @@ static TypeTag TagFromString(const char* str)
 	return TypeTag::Unresolved;
 }
 
-Type* Type::FindOrAdd(const std::string& name)
+StructType* Type::IsStruct()
 {
-	PROFILE_FUNCTION();
+	if (tag == TypeTag::Struct)
+		return static_cast<StructType*>(this);
 
-	if (!RegisteredTypes.count(name))
-	{
-		Type& t = RegisteredTypes[name];
-		t.name = name;
-		t.tag = TagFromString(name.c_str());
-		return &t;
-	}
-
-	return &RegisteredTypes[name];
+	return nullptr;
 }
 
-Type* Type::FindOrAdd(TypeTag tag)
+ArrayType* Type::IsArray()
 {
-	PROFILE_FUNCTION();
+	if (tag == TypeTag::Array)
+		return static_cast<ArrayType*>(this);
 
-	auto it = std::find_if(std::begin(RegisteredTypes), std::end(RegisteredTypes),
-		[tag](auto&& p) { return p.second.tag == tag; });
+	return nullptr;
+}
 
-	// add that thang
-	if (it == RegisteredTypes.end())
-		return &(RegisteredTypes[TagToString(tag)] = Type(tag));
+Type* Type::Get(TypeTag tag, Type* contained)
+{
+	Key key = { tag, contained };
+	if (!RegisteredTypes.count(key))
+		return Add(key);
 
-	return &it->second;
+	return RegisteredTypes[key];
+}
+Type* Type::Get(const std::string& name, Type* contained)
+{
+	ASSERT(name.length());
+
+	return Get(TagFromString(name.c_str()), contained);
+}
+
+StructType* StructType::Get(const std::string& name, const std::vector<Type*>& members)
+{
+	if (RegisteredTypes.count(name))
+		return RegisteredTypes[name];
+
+	return RegisteredTypes[name] = new StructType(name, members);
+}
+
+ArrayType* ArrayType::Get(Type* elementType, uint64_t count)
+{
+	Key key = { elementType, count };
+	if (RegisteredTypes.count(key))
+		return RegisteredTypes[key];
+
+	return RegisteredTypes[key] = new ArrayType(elementType, count);
 }

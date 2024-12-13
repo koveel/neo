@@ -260,7 +260,7 @@ llvm::Value* UnaryExpression::Generate()
 	}
 	case UnaryType::Deref:
 	{
-		type = type->GetBaseType();
+		type = type->contained;
 		llvm::Value* loaded = builder->CreateLoad(value);
 		return loaded;
 	}
@@ -276,7 +276,7 @@ llvm::Value* ArrayInitializationExpression::Generate()
 
 	uint64_t i = 0;
 	
-	llvm::Type* elementType = type ? type->GetBaseType()->raw : nullptr;
+	llvm::Type* elementType = type ? type->contained->raw : nullptr;
 	for (auto& expr : elements)
 	{
 		llvm::Value* element = expr->Generate();
@@ -358,14 +358,14 @@ llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 	if (!binary->left->type->IsArray())
 		throw CompileError(binary->sourceLine, "expected target of array access [] to be of array type");
 
-	binary->type = binary->left->type->GetBaseType();
+	binary->type = binary->left->type->GetContainedType();
 
 	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
 	return builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
 }
 
-static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* structTy);
-static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* structTy, CompoundStatement* initializer);
+static void DefaultInitializeStructMembers(llvm::Value* structPtr, StructType* structTy);
+static void AggregateInitializeStructMembers(llvm::Value* structPtr, StructType* structTy, CompoundStatement* initializer);
 
 llvm::Value* VariableDefinitionExpression::Generate()
 {
@@ -421,27 +421,29 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	sCurrentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
-	if (type->IsStruct())
+	if (StructType* structType = type->IsStruct())
 	{
 		if (aggregateInitialization)
 		{
-			AggregateInitializeStructMembers(alloc, type, aggregateInitializer);
+			AggregateInitializeStructMembers(alloc, structType, aggregateInitializer);
 			return alloc;
 		}
 		
 		if (!initializer)
-			DefaultInitializeStructMembers(alloc, type);
+			DefaultInitializeStructMembers(alloc, structType);
 	}
 
 	if (!initialVal)
 	{
 		if (type->IsPointer())
 			initialVal = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
-		else
+		if (type->IsNumeric())
 			initialVal = GetNumericalConstant(type->raw, 0);
+		if (type->IsArray())
+			return alloc;
 	}
-
 	builder->CreateStore(initialVal, alloc);
+
 	return alloc;
 }
 
@@ -452,8 +454,8 @@ static Type* FindNeoTypeFromLLVMType(llvm::Type* type)
 
 	for (auto& pair : Type::RegisteredTypes)
 	{
-		if (pair.second.raw == type)
-			return &pair.second;
+		if (pair.second->raw == type)
+			return pair.second;
 	}
 
 	if (type->isPointerTy())
@@ -492,7 +494,7 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 		if (objectType->IsPointer())
 		{
 			objectValue = builder->CreateLoad(objectValue);
-			objectType = objectType->GetBaseType();
+			objectType = objectType->GetContainedType();
 		}
 		else
 			throw CompileError(binary->sourceLine, "can't access member of non-struct type or pointer to struct type");
@@ -512,8 +514,10 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 		return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, size, false));
 	}
 
+	StructType* structType = objectType->IsStruct();
+
 	// Find member index
-	const auto& members = objectType->Struct.definition->members;
+	const auto& members = structType->definition->members;
 	int memberIndex = -1;
 	for (uint32_t i = 0; i < members.size(); i++)
 	{
@@ -526,7 +530,7 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 		}
 	}
 	if (memberIndex == -1)
-		throw CompileError(binary->sourceLine, "'%s' not a member of struct '%s'", memberExpr->name.c_str(), objectType->name.c_str());
+		throw CompileError(binary->sourceLine, "'%s' not a member of struct '%s'", memberExpr->name.c_str(), objectType->GetName().c_str());
 
 	llvm::Value* memberPtr = builder->CreateStructGEP(objectValue, (uint32_t)memberIndex);
 	return memberPtr;
@@ -758,7 +762,7 @@ llvm::Value* LoopExpression::Generate()
 			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
 		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), llvm::APInt(64, arrayType->getArrayNumElements(), false));
 
-		iteratorType = range->type->GetBaseType();
+		iteratorType = range->type->GetContainedType();
 
 		// Init iterator
 		iteratorValuePtr = builder->CreateAlloca(arrayType->getArrayElementType());
@@ -871,7 +875,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	type = Type::FindOrAdd(prototype.ReturnType->name);
+	type = prototype.ReturnType;
 	bool hasBody = body.size();
 	
 	// Full definition for function
@@ -952,9 +956,10 @@ llvm::Value* ReturnStatement::Generate()
 	if (CompoundStatement* compound = To<CompoundStatement>(value))
 	{
 		type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
+		StructType* structType = type->IsStruct();
 
 		llvm::Value* structPtr = builder->CreateAlloca(type->raw);
-		AggregateInitializeStructMembers(structPtr, type, compound);
+		AggregateInitializeStructMembers(structPtr, structType, compound);
 
 		llvm::Value* loaded = builder->CreateLoad(structPtr);
 		return builder->CreateRet(loaded);
@@ -999,12 +1004,11 @@ llvm::Value* FunctionCallExpression::Generate()
 	return builder->CreateCall(function, argValues);
 }
 
-static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
+static void DefaultInitializeStructMembers(llvm::Value* structPtr, StructType* type)
 {
 	PROFILE_FUNCTION();
 
-	Type::StructType& structType = type->Struct;
-	StructDefinitionExpression* definition = structType.definition;
+	StructDefinitionExpression* definition = type->definition;
 
 	uint32_t i = 0;
 	for (auto& member : definition->members)
@@ -1019,9 +1023,9 @@ static void DefaultInitializeStructMembers(llvm::Value* structPtr, Type* type)
 	}
 }
 
-static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Type::StructType& type)
+static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, StructType* type)
 {
-	StructDefinitionExpression* definition = type.definition;
+	StructDefinitionExpression* definition = type->definition;
 
 	uint32_t i = 0;
 	for (auto& member : definition->members)
@@ -1035,12 +1039,11 @@ static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Type::
 	return std::numeric_limits<uint32_t>::max();
 }
 
-static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* type, CompoundStatement* initializer)
+static void AggregateInitializeStructMembers(llvm::Value* structPtr, StructType* type, CompoundStatement* initializer)
 {
 	PROFILE_FUNCTION();
 
-	Type::StructType& structType = type->Struct;
-	StructDefinitionExpression* definition = structType.definition;
+	StructDefinitionExpression* definition = type->definition;
 
 	std::vector<uint32_t> initializedMembers;
 	initializedMembers.reserve(initializer->children.size());
@@ -1060,9 +1063,9 @@ static void AggregateInitializeStructMembers(llvm::Value* structPtr, Type* type,
 			throw CompileError(conciseBinary->sourceLine, "expected concise member access \".member\" for lhs of initializer");
 		VariableAccessExpression* variable = To<VariableAccessExpression>(conciseBinary->right);
 
-		uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, structType);
+		uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, type);
 		if (memberIndex == std::numeric_limits<uint32_t>::max())
-			throw CompileError(expr->sourceLine, "member '%s' doesn't exist in struct '%s'", variable->name.c_str(), type->name.c_str());
+			throw CompileError(expr->sourceLine, "member '%s' doesn't exist in struct '%s'", variable->name.c_str(), type->GetName().c_str());
 		
 		if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
 			throw CompileError(expr->sourceLine, "member '%s' appears multiple times in aggregate initializer. can only assign to it once", variable->name.c_str());
@@ -1086,110 +1089,164 @@ llvm::Value* StructDefinitionExpression::Generate()
 			continue;
 
 		throw CompileError(vardef->sourceLine, "unresolved type '%s' for member '%s' in struct '%s'",
-			memberType->name.c_str(), vardef->name.c_str(), name.c_str());
+			memberType->GetName().c_str(), vardef->name.c_str(), name.c_str());
 	}
 
 	return nullptr;
 }
 
-// Sets type.raw to proper llvm::Type
-static void ResolveType(const std::string& name, Type& type, int possibleSourceLine = -1)
+static void ResolveType(Type&, int line = -1);
+
+static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 {
 	PROFILE_FUNCTION();
-	
+
 	// Already resolved?
 	if (type.raw)
 		return;
 
-	if (type.IsStruct())
-	{
-		auto& members = type.Struct.definition->members;
-
-		std::vector<llvm::Type*> memberTypes;
-		memberTypes.reserve(members.size());
-
-		for (auto& member : members)
-		{
-			ResolveType(member->type->name, *member->type, (int)type.Struct.definition->sourceLine);
-			memberTypes.push_back(member->type->raw);
-		}
-
-		type.raw = llvm::StructType::create(*context, memberTypes, name);
-		return;
-	}
-	else if (type.IsPointer())
+	if (type.IsPointer())
 	{
 		// *i32 -> i32
-		std::string containedName = std::string(name).erase(0, 1);
-		Type* contained = Type::FindOrAdd(containedName);
-		ResolveType(containedName, *contained);
+		Type* contained = type.contained;
+		ResolveType(*contained);
 		type.raw = llvm::PointerType::get(contained->raw, 0u); // Magic address space of 0???
+
 		return;
 	}
-	else if (type.IsArray())
-	{
-		// []f32 -> f32
-		std::string elementName = std::string(name).erase(0, 2);
-		Type* elementType = Type::FindOrAdd(elementName);
-		ResolveType(elementName, *elementType);
-		type.raw = llvm::ArrayType::get(elementType->raw, type.Array.size);
-		return;
-	}
-	else
+
 	switch (type.tag)
 	{
-		case TypeTag::UInt8:
-		case TypeTag::Int8:
-		{
-			type.raw = llvm::Type::getInt8Ty(*context);
-			return;
-		}
-		case TypeTag::UInt16:
-		case TypeTag::Int16:
-		{
-			type.raw = llvm::Type::getInt16Ty(*context);
-			return;
-		}
-		case TypeTag::UInt32:
-		case TypeTag::Int32:
-		{
-			type.raw = llvm::Type::getInt32Ty(*context);
-			return;
-		}
-		case TypeTag::UInt64:
-		case TypeTag::Int64:
-		{
-			type.raw = llvm::Type::getInt64Ty(*context);
-			return;
-		}
-		case TypeTag::Float32:
-		{
-			type.raw = llvm::Type::getFloatTy(*context);
-			return;
-		}
-		case TypeTag::Float64:
-		{
-			type.raw = llvm::Type::getDoubleTy(*context);
-			return;
-		}
-		case TypeTag::Bool:
-		{
-			type.raw = llvm::Type::getInt1Ty(*context);
-			return;
-		}
-		case TypeTag::String:
-		{
-			type.raw = llvm::Type::getInt8PtrTy(*context);
-			return;
-		}
-		case TypeTag::Void:
-		{
-			type.raw = llvm::Type::getVoidTy(*context);
-			return;
-		}
-	} 
+	case TypeTag::UInt8:
+	case TypeTag::Int8:
+	{
+		type.raw = llvm::Type::getInt8Ty(*context);
+		return;
+	}
+	case TypeTag::UInt16:
+	case TypeTag::Int16:
+	{
+		type.raw = llvm::Type::getInt16Ty(*context);
+		return;
+	}
+	case TypeTag::UInt32:
+	case TypeTag::Int32:
+	{
+		type.raw = llvm::Type::getInt32Ty(*context);
+		return;
+	}
+	case TypeTag::UInt64:
+	case TypeTag::Int64:
+	{
+		type.raw = llvm::Type::getInt64Ty(*context);
+		return;
+	}
+	case TypeTag::Float32:
+	{
+		type.raw = llvm::Type::getFloatTy(*context);
+		return;
+	}
+	case TypeTag::Float64:
+	{
+		type.raw = llvm::Type::getDoubleTy(*context);
+		return;
+	}
+	case TypeTag::Bool:
+	{
+		type.raw = llvm::Type::getInt1Ty(*context);
+		return;
+	}
+	case TypeTag::String:
+	{
+		type.raw = llvm::Type::getInt8PtrTy(*context);
+		return;
+	}
+	case TypeTag::Void:
+	{
+		type.raw = llvm::Type::getVoidTy(*context);
+		return;
+	}
+	}
+}
 
-	throw CompileError(possibleSourceLine, "unresolved type %s", type.name.c_str());
+static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
+{
+	PROFILE_FUNCTION();
+
+	// Already resolved?
+	if (type.raw)
+		return;
+
+	auto& members = type.definition->members;
+
+	std::vector<llvm::Type*> memberTypes;
+	memberTypes.reserve(members.size());
+
+	for (auto& member : members)
+	{
+		ResolveType(*member->type, (int)type.definition->sourceLine);
+		memberTypes.push_back(member->type->raw);
+	}
+
+	type.raw = llvm::StructType::create(*context, memberTypes, type.name);
+}
+
+static void ResolveArrayType(ArrayType& type, int possibleSourceLine = -1)
+{
+	PROFILE_FUNCTION();
+
+	// Already resolved?
+	if (type.raw)
+		return;
+
+	// []f32 -> f32
+	Type* elementType = type.contained;
+	ResolveType(*elementType);
+	type.raw = llvm::ArrayType::get(elementType->raw, type.count);
+}
+
+static void ResolveType(Type& type, int line)
+{
+	switch (type.tag)
+	{
+	case TypeTag::Array:
+	{
+		ResolveArrayType(*type.IsArray(), line);
+		return;
+	}
+	case TypeTag::Struct:
+	{
+		ResolveStructType(*type.IsStruct(), line);
+		return;
+	}
+	default:
+	{
+		ResolvePrimitiveType(type, line);
+		return;
+	}
+	}
+
+	//throw CompileError(possibleSourceLine, "unresolved type %s", type.GetName().c_str());
+}
+
+// todo: store ref to returns in the ast node?
+static llvm::Type* FindReturnTypeFromBlock(std::vector<std::unique_ptr<Expression>>& block)
+{
+	for (auto& expr : block)
+	{
+		if (ReturnStatement* ret = To<ReturnStatement>(expr))
+		{
+			return ret->type->raw;
+		}
+
+		if (CompoundStatement* compound = To<CompoundStatement>(expr))
+		{
+			if (llvm::Type* possible = FindReturnTypeFromBlock(compound->children))
+				return possible;
+		}
+	}
+
+	return nullptr;
 }
 
 // todo: abstract?
@@ -1216,6 +1273,8 @@ static void VisitFunctionDefinitions(ParseResult& result)
 		i = 0;
 
 		llvm::Type* retType = prototype.ReturnType->raw;
+		//llvm::Type* returnTypeFromBody = FindReturnTypeFromBlock(definition->body);
+		//retType = returnTypeFromBody;
 
 		llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
 		llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *module);
@@ -1228,40 +1287,48 @@ static void ResolveParsedTypes(ParseResult& result)
 
 	for (auto& pair : Type::RegisteredTypes)
 	{
-		const auto& name = pair.first;
-		Type& type = pair.second;
+		Type* type = pair.second;
+		ResolveType(*type);
+	}
 
-		ResolveType(name, type);
+	for (auto& pair : StructType::RegisteredTypes)
+	{
+		Type* type = pair.second;
+		ResolveType(*type);
+	}
+
+	for (auto& pair : ArrayType::RegisteredTypes)
+	{
+		Type* type = pair.second;
+		ResolveType(*type);
 	}
 
 	VisitFunctionDefinitions(result);
 }
 
-Type* Type::GetBaseType() const
+Type* Type::GetContainedType() const
 {
 	Type* baseType = nullptr;
 	if (IsPointer())
-		baseType = FindOrAdd(name.substr(1));
-	if (IsArray())
-		baseType = FindOrAdd(name.substr(2));
+		baseType = contained;
 
 	ASSERT(baseType);
-	ResolveType(baseType->name, *baseType);
+	ResolveType(*baseType);
 
 	return baseType;
 }
 
-Type* Type::GetPointerTo() const
+Type* Type::GetPointerTo()
 {
-	Type* pointerTy = FindOrAdd('*' + name);
-	ResolveType(pointerTy->name, *pointerTy);
+	Type* pointerTy = Type::Get(TypeTag::Pointer, this);
+	ResolveType(*pointerTy);
 
 	return pointerTy;
 }
 
-Type* Type::GetArrayTypeOf() const
+ArrayType* Type::GetArrayTypeOf(uint64_t count)
 {
-	Type* arrayTy = FindOrAdd("[]" + name);
+	ArrayType* arrayTy = ArrayType::Get(this, count);
 	//ResolveType(arrayTy->name, *arrayTy);
 
 	return arrayTy;

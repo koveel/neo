@@ -36,5 +36,6 @@
     <ClCompile Include="src\PlatformUtils.cpp" />
     <ClCompile Include="src\Type.cpp" />
     <ClCompile Include="src\pch.cpp" />
+    <ClCompile Include="src\TreeTypeResolve.cpp" />
   </ItemGroup>
 </Project>
