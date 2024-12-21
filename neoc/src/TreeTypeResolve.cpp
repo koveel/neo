@@ -51,7 +51,9 @@ void VariableDefinitionExpression::ResolveType()
 	if (initializer)
 	{
 		initializer->ResolveType();
-		type = initializer->type;
+
+		//if (!type)
+		//	type = initializer->type;
 	}
 }
 

@@ -602,7 +602,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		if (!variable->type->IsPointer() && token->type == TokenType::LeftSquareBracket)
 		{
 			variable->initializer = ParseArrayDefinition(variable.get());
-			variable->type = variable->initializer->type;
+			//variable->type = variable->initializer->type;
 			return variable;
 		}
 	}

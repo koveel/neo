@@ -12,7 +12,7 @@
 #include "PlatformUtils.h"
 
 /* TODO:
-Handle signs
+			Handle signs
 Casting
 Array = instance of array struct, no length needed if []x is a function parameter
 Loop control flow (break/continue)
@@ -121,6 +121,35 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression
 	return LoadIfPointer(value, expr.get());
 }
 
+static uint32_t GetBitWidthOfIntegralType(TypeTag tag)
+{
+	switch (tag)
+	{
+		case TypeTag::UInt8:  return 8;
+		case TypeTag::Int8:   return 8;
+		case TypeTag::UInt16: return 16;
+		case TypeTag::Int16:  return 16;
+		case TypeTag::UInt32: return 32;
+		case TypeTag::Int32:  return 32;
+		case TypeTag::UInt64: return 64;
+		case TypeTag::Int64:  return 64;
+		case TypeTag::Bool:   return 1;
+	}
+
+	return 0;
+}
+
+static bool IsArithmetic(BinaryType type)
+{
+	uint32_t num = (uint32_t)type;
+	return num >= 1 && num <= 8;
+}
+
+static bool IsComparison(BinaryType type)
+{
+	return type >= BinaryType::Equal && type <= BinaryType::GreaterEqual;
+}
+
 static llvm::Value* GetNumericalConstant(llvm::Type* type, uint64_t value = 1)
 {
 	switch (type->getTypeID())
@@ -151,27 +180,19 @@ llvm::Value* PrimaryExpression::Generate()
 		// TODO: handle unsigned values properly (wrapping etc)
 
 	case TypeTag::UInt8:
-		return llvm::ConstantInt::get(*context, llvm::APInt(8, value.u64, false));
 	case TypeTag::UInt16:
-		return llvm::ConstantInt::get(*context, llvm::APInt(16, value.u64, false));
 	case TypeTag::UInt32:
-		return llvm::ConstantInt::get(*context, llvm::APInt(32, value.u64, false));
 	case TypeTag::UInt64:
-		return llvm::ConstantInt::get(*context, llvm::APInt(64, value.u64, false));
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.u64, false));
 	case TypeTag::Int8:
-		return llvm::ConstantInt::get(*context, llvm::APInt(8, value.i64, true));
 	case TypeTag::Int16:
-		return llvm::ConstantInt::get(*context, llvm::APInt(16, value.i64, true));
 	case TypeTag::Int32:
-		return llvm::ConstantInt::get(*context, llvm::APInt(32, value.i64, true));
 	case TypeTag::Int64:
-		return llvm::ConstantInt::get(*context, llvm::APInt(64, value.i64, true));
-
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.i64, true));
 	case TypeTag::Float32:
 		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64));
 	case TypeTag::Float64:
 		return llvm::ConstantFP::get(*context, llvm::APFloat(value.f64));
-
 	case TypeTag::Bool:
 		return llvm::ConstantInt::getBool(*context, value.b32);
 	}
@@ -571,6 +592,74 @@ llvm::Value* VariableAccessExpression::Generate()
 	return variable.raw;
 }
 
+// Kinda wack
+static llvm::Instruction::BinaryOps LLVMBinaryInstructionFromBinary(BinaryExpression* binary)
+{
+	using namespace llvm;
+
+	ASSERT(IsArithmetic(binary->binaryType));
+	
+	static constexpr std::array<Instruction::BinaryOps, 4> instructions[] =
+	{
+		{
+			Instruction::BinaryOps::FAdd, Instruction::BinaryOps::FSub,
+			Instruction::BinaryOps::FMul, Instruction::BinaryOps::FDiv,
+		},
+		{
+			Instruction::BinaryOps::Add, Instruction::BinaryOps::Sub,
+			Instruction::BinaryOps::Mul, Instruction::BinaryOps::SDiv,
+		},
+		{
+			Instruction::BinaryOps::Add, Instruction::BinaryOps::Sub,
+			Instruction::BinaryOps::Mul, Instruction::BinaryOps::UDiv,
+		}
+	};
+
+	const auto& lhsType = binary->left->type;
+	uint32_t instIdx = lhsType->IsFloatingPoint() ? 0 : (lhsType->IsSigned() ? 1 : 2);
+
+	uint32_t num = (uint32_t)binary->binaryType;
+	uint32_t index = (num % 2 == 0 ? (num / 2 - 1) : ((num - 1) / 2)); // Probably the worst line of code ive ever written
+
+	return instructions[instIdx][index];
+}
+
+// also wack
+static llvm::CmpInst::Predicate LLVMCmpInstructionFromBinary(BinaryExpression* binary)
+{
+	using namespace llvm;
+
+	ASSERT(IsComparison(binary->binaryType));
+
+	static constexpr std::array<CmpInst::Predicate, 6> predicates[] =
+	{
+		{
+			CmpInst::Predicate::ICMP_EQ,  CmpInst::Predicate::ICMP_NE,  // =, !=
+			CmpInst::Predicate::ICMP_ULT, CmpInst::Predicate::ICMP_ULE, // <, <=
+			CmpInst::Predicate::ICMP_UGT, CmpInst::Predicate::ICMP_UGE, // >, >=
+		},
+		{
+			CmpInst::Predicate::ICMP_EQ,  CmpInst::Predicate::ICMP_NE,  // =, !=
+			CmpInst::Predicate::ICMP_SLT, CmpInst::Predicate::ICMP_SLE, // <, <=
+			CmpInst::Predicate::ICMP_SGT, CmpInst::Predicate::ICMP_SGE, // >, >=
+		},
+		{
+			CmpInst::Predicate::FCMP_UEQ, CmpInst::Predicate::FCMP_UNE, // =, !=
+			CmpInst::Predicate::FCMP_ULT, CmpInst::Predicate::FCMP_ULE, // <, <=
+			CmpInst::Predicate::FCMP_UGT, CmpInst::Predicate::FCMP_UGE, // >, >=
+		}
+	};
+
+	::Type* lhsType = binary->left->type;
+	uint32_t predIdx = lhsType->IsFloatingPoint() ? 0 : (lhsType->IsSigned() ? 1 : 2);
+
+	auto& preds = predicates[predIdx];
+	uint32_t index = (uint32_t)binary->binaryType % 10;
+	ASSERT(index >= 0 && index < preds.size());
+
+	return preds[index];
+}
+
 llvm::Value* BinaryExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -584,7 +673,14 @@ llvm::Value* BinaryExpression::Generate()
 
 	llvm::Value* lhs = left->Generate();
 	llvm::Value* rhs = right->Generate();
+	 
+	// Type checking
 
+	llvm::CmpInst::Predicate comparePredicate = {};
+	if (IsComparison(binaryType))
+		comparePredicate = LLVMCmpInstructionFromBinary(this);
+
+	ASSERT(left->type->GetSign() == right->type->GetSign()); // TODO: casts ?
 	type = left->type;
 
 	llvm::Value* unloadedLhs = lhs;
@@ -602,39 +698,15 @@ llvm::Value* BinaryExpression::Generate()
 	switch (binaryType)
 	{
 	case BinaryType::CompoundAdd:
-	case BinaryType::Add:
-	{
-		if (lhsType->isIntegerTy())
-			instruction = Instruction::Add;
-		else if (lhsType->isFloatingPointTy())
-			instruction = Instruction::FAdd;
-
-		break;
-	}
+	case BinaryType::Add:	
 	case BinaryType::CompoundSub:
 	case BinaryType::Subtract:
-	{
-		if (lhsType->isIntegerTy())
-			instruction = Instruction::Sub;
-		else if (lhsType->isFloatingPointTy())
-			instruction = Instruction::FSub;
-
-		break;
-	}
 	case BinaryType::CompoundMul:
 	case BinaryType::Multiply:
-	{
-		if (lhsType->isIntegerTy())
-			instruction = Instruction::Mul;
-		else if (lhsType->isFloatingPointTy())
-			instruction = Instruction::FMul;
-
-		break;
-	}
 	case BinaryType::CompoundDiv:
 	case BinaryType::Divide:
 	{
-		instruction = Instruction::FDiv;
+		instruction = LLVMBinaryInstructionFromBinary(this);
 		break;
 	}
 	case BinaryType::Assign:
@@ -643,56 +715,12 @@ llvm::Value* BinaryExpression::Generate()
 		return rhs;
 	}
 	case BinaryType::Equal:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpEQ(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpUEQ(lhs, rhs, "cmptmp");
-
-		break;
-	}
 	case BinaryType::NotEqual:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpNE(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpUNE(lhs, rhs, "cmptmp");
-
-		break;
-	}
 	case BinaryType::Less:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpSLT(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpULT(lhs, rhs, "cmptmp");
-
-		break;
-	}
 	case BinaryType::LessEqual:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpSLE(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpULE(lhs, rhs, "cmptmp");
-		break;
-	}
 	case BinaryType::Greater:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpSGT(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpUGT(lhs, rhs, "cmptmp");
-		break;
-	}
 	case BinaryType::GreaterEqual:
-	{
-		if (lhsType->isIntegerTy())
-			return builder->CreateICmpSGE(lhs, rhs, "cmptmp");
-		if (lhsType->isFloatingPointTy())
-			return builder->CreateFCmpUGE(lhs, rhs, "cmptmp");
-		break;
-	}
+		return builder->CreateCmp(comparePredicate, lhs, rhs, "cmp");
 	default:
 		ASSERT(false);
 	}
@@ -707,19 +735,22 @@ llvm::Value* BinaryExpression::Generate()
 
 llvm::Value* CompoundStatement::Generate()
 {
-	if (type->IsArray()) // array create [...]
+	if (type && type->IsArray()) // array create [...]
 		return CreateArrayAlloca(type->raw, children);
 
 	sCurrentScope = sCurrentScope->Deepen();
 
 	llvm::BasicBlock* previousBlock = builder->GetInsertBlock();
 	llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, "entry", sCurrentFunction);
+	builder->CreateBr(block);
 	builder->SetInsertPoint(block);
 
 	for (auto& expr : children)
 		expr->Generate();
 
-	builder->SetInsertPoint(previousBlock);
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "end", sCurrentFunction);
+	builder->CreateBr(endBlock);
+	builder->SetInsertPoint(endBlock);
 
 	sCurrentScope = sCurrentScope->Increase();
 
@@ -958,6 +989,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 				break;
 		}
 
+		//bodyBlock = builder->GetInsertBlock();
 		if (!bodyBlock->getTerminator())
 		{
 			if (type->tag != TypeTag::Void)
@@ -991,13 +1023,23 @@ llvm::Value* ReturnStatement::Generate()
 	if (CompoundStatement* compound = To<CompoundStatement>(value))
 	{
 		type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
-		StructType* structType = type->IsStruct();
 
-		llvm::Value* structPtr = builder->CreateAlloca(type->raw);
-		AggregateInitializeStructMembers(structPtr, structType, compound);
+		llvm::Value* result = nullptr;
+		if (StructType* structType = type->IsStruct())
+		{
+			llvm::Value* structPtr = builder->CreateAlloca(type->raw);
+			AggregateInitializeStructMembers(structPtr, structType, compound);
 
-		llvm::Value* loaded = builder->CreateLoad(structPtr);
-		return builder->CreateRet(loaded);
+			result = builder->CreateLoad(structPtr);
+		}
+		if (ArrayType* arrayType = type->IsArray())
+		{
+			llvm::Value* arrayPtr = CreateArrayAlloca(arrayType->raw, compound->children);
+			result = builder->CreateLoad(arrayPtr);
+		}
+		ASSERT(result);
+
+		return builder->CreateRet(result);
 	}
 
 	// Everything else

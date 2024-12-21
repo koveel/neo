@@ -72,6 +72,9 @@ public:
 	ArrayType* IsArray();
 	bool IsPointer() const { return tag == TypeTag::Pointer; }
 	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
+	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
+	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
+	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
 
 	// De-pointerfy
 	Type* GetContainedType() const;
