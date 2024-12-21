@@ -23,7 +23,12 @@ class Type;
 class StructType;
 class ArrayType;
 
-inline void hash_combine(std::size_t& seed, uint64_t v);
+static inline void hash_combine(std::size_t& seed, uint64_t v)
+{
+	std::hash<uint64_t> hasher;
+	seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+}
+
 namespace std
 {
 	template<> struct hash<pair<TypeTag, Type*>>
@@ -47,12 +52,6 @@ namespace std
 			return seed;
 		}
 	};
-}
-
-void hash_combine(std::size_t& seed, uint64_t v)
-{
-	std::hash<uint64_t> hasher;
-	seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 }
 
 class Type

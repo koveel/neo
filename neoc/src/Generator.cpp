@@ -12,7 +12,10 @@
 #include "PlatformUtils.h"
 
 /* TODO:
-Array iteration
+Handle signs
+Casting
+Array = instance of array struct, no length needed if []x is a function parameter
+Loop control flow (break/continue)
 
 Functions:
 	Default parameters
@@ -65,6 +68,20 @@ static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBin
 
 	*outBinary = binary;
 	return true;
+}
+
+static bool IsBinaryCompound(BinaryType type)
+{
+	switch (type)
+	{
+		case BinaryType::CompoundAdd:
+		case BinaryType::CompoundSub:
+		case BinaryType::CompoundMul:
+		case BinaryType::CompoundDiv:
+			return true;
+		default:
+			return false;
+	}
 }
 
 static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
@@ -269,43 +286,33 @@ llvm::Value* UnaryExpression::Generate()
 	ASSERT(false);
 }
 
-llvm::Value* ArrayInitializationExpression::Generate()
+static llvm::Value* CreateArrayAlloca(llvm::Type* arrayType, const std::vector<std::unique_ptr<Expression>>& elements)
 {
 	std::vector<llvm::Value*> values;
 	values.reserve(elements.size());
 
-	uint64_t i = 0;
-	
-	llvm::Type* elementType = type ? type->contained->raw : nullptr;
 	for (auto& expr : elements)
 	{
 		llvm::Value* element = expr->Generate();
-		if (elementType && (elementType != element->getType()))
-			//throw CompileError(sourceLine, "expected %s as array element but got %s (index = %d)", )
-			throw CompileError(sourceLine, "array element type mismatch (index = %ld)", i);
-
-		if (!elementType)
-		{
-			elementType = element->getType();
-		}
+		//if (elementType && (elementType != element->getType()))
+		//	//throw CompileError(sourceLine, "expected %s as array element but got %s (index = %d)", )
+		//	throw CompileError(sourceLine, "array element type mismatch (index = %ld)", i);
 
 		values.push_back(element);
-		i++;
 	}
 
-	llvm::Type* arrayTy = llvm::ArrayType::get(elementType, i);
-	type->raw = arrayTy;
-	llvm::Value* alloc = builder->CreateAlloca(arrayTy);
-	i = 0;
+	llvm::Value* alloc = builder->CreateAlloca(arrayType);
+	//i = 0;
 
 	// initialize elements (store into gep)
-	// *elementType
+	uint64_t i = 0;
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
 	for (llvm::Value* value : values)
 	{
 		llvm::Value* index = llvm::ConstantInt::get(*context, llvm::APInt(32, i, false));
-		llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayTy, alloc, { zeroIndex, index });
+		llvm::Value* elementPtr = builder->CreateInBoundsGEP(arrayType, alloc, { zeroIndex, index });
 		builder->CreateStore(values[i], elementPtr);
+
 		i++;
 	}
 
@@ -344,8 +351,17 @@ static llvm::Value* GetArrayElement(llvm::Value* arrayPtr, uint64_t index)
 	return GetArrayElement(arrayPtr, llvm::ConstantInt::get(*context, llvm::APInt(32, index, false)));
 }
 
-llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
+//llvm::Value* SubscriptExpression::Generate()
+static llvm::Value* GenerateSubscript(BinaryExpression* binary)
 {
+	//// Array creation, not subscript (until multi-dim arrays?)
+	//VariableAccessExpression* variable = nullptr;
+	//if (!(variable = To<VariableAccessExpression>(operand))) // identifier ig
+	//	throw CompileError(sourceLine, "expected identifier for array element type");
+	//
+	//Type* elementType = Type::Get(variable->name);
+	////llvm::Value* ptr = operand->Generate();
+
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*context, llvm::APInt(32, 0, false));
 
 	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(), binary->right);
@@ -353,15 +369,13 @@ llvm::Value* GenerateSubscriptExpression(BinaryExpression* binary)
 		throw CompileError(binary->sourceLine, "expected integer value for array index");
 
 	llvm::Value* arrayPtr = binary->left->Generate(); // todo: check this shit
+	binary->type = binary->left->type->GetContainedType();
 
 	// Should be doing this at the start of this function
 	if (!binary->left->type->IsArray())
-		throw CompileError(binary->sourceLine, "expected target of array access [] to be of array type");
+		throw CompileError(binary->sourceLine, "expected subscript target to be of array type");
 
-	binary->type = binary->left->type->GetContainedType();
-
-	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
-	return builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, indexVal });
+	return builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
 }
 
 static void DefaultInitializeStructMembers(llvm::Value* structPtr, StructType* structTy);
@@ -384,13 +398,6 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				auto array = To<ArrayDefinitionExpression>(initializer);
 				return array->Generate();
 			}
-			case NodeType::ArrayInitialize:
-			{
-				auto arrayExpr = To<ArrayInitializationExpression>(initializer);
-				llvm::Value* array = arrayExpr->Generate();
-				sCurrentScope->AddValue(name, { type = arrayExpr->type, array });
-				return array;
-			}
 			case NodeType::Primary:
 			{
 				auto primary = To<PrimaryExpression>(initializer);
@@ -400,7 +407,15 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			case NodeType::Compound:
 			{
 				// aggregate init
-				aggregateInitializer = To<CompoundStatement>(initializer);
+				CompoundStatement* compound = To<CompoundStatement>(initializer);
+				if (compound->type->IsArray()) // [...]
+				{
+					llvm::Value* initializer = CreateArrayAlloca(compound->type->raw, compound->children);
+					sCurrentScope->AddValue(name, { type = compound->type, initializer });
+					return initializer;
+				}
+
+				aggregateInitializer = compound;
 				aggregateInitialization = true;
 				break;
 			}
@@ -457,6 +472,16 @@ static Type* FindNeoTypeFromLLVMType(llvm::Type* type)
 		if (pair.second->raw == type)
 			return pair.second;
 	}
+	for (auto& pair : ArrayType::RegisteredTypes)
+	{
+		if (pair.second->raw == type)
+			return pair.second;
+	}
+	for (auto& pair : StructType::RegisteredTypes)
+	{
+		if (pair.second->raw == type)
+			return pair.second;
+	}
 
 	if (type->isPointerTy())
 		return FindNeoTypeFromLLVMType(type->getContainedType(0));
@@ -508,7 +533,7 @@ static llvm::Value* GenerateStructureMemberAccessExpression(BinaryExpression* bi
 	const std::string& targetMemberName = memberExpr->name;
 	
 	// epic hardcoded array.size
-	if (objectType->IsArray() && targetMemberName == "size")
+	if (objectType->IsArray() && targetMemberName == "count")
 	{
 		uint64_t size = objectType->raw->getArrayNumElements();
 		return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, size, false));
@@ -555,19 +580,20 @@ llvm::Value* BinaryExpression::Generate()
 	if (binaryType == BinaryType::MemberAccess)
 		return GenerateStructureMemberAccessExpression(this);
 	if (binaryType == BinaryType::Subscript)
-		return GenerateSubscriptExpression(this);
+		return GenerateSubscript(this);
 
 	llvm::Value* lhs = left->Generate();
 	llvm::Value* rhs = right->Generate();
 
 	type = left->type;
 
+	llvm::Value* unloadedLhs = lhs;
 	// Unless assiging, treat variables as the underlying values
 	if (binaryType != BinaryType::Assign)
 	{
 		lhs = LoadIfVariable(lhs, left);
-		rhs = LoadIfVariable(rhs, right);
 	}
+	rhs = LoadIfVariable(rhs, right);
 
 	llvm::Type* lhsType = lhs->getType();
 	llvm::Type* rhsType = rhs->getType();
@@ -637,7 +663,7 @@ llvm::Value* BinaryExpression::Generate()
 	case BinaryType::Less:
 	{
 		if (lhsType->isIntegerTy())
-			return builder->CreateICmpULT(lhs, rhs, "cmptmp");
+			return builder->CreateICmpSLT(lhs, rhs, "cmptmp");
 		if (lhsType->isFloatingPointTy())
 			return builder->CreateFCmpULT(lhs, rhs, "cmptmp");
 
@@ -646,7 +672,7 @@ llvm::Value* BinaryExpression::Generate()
 	case BinaryType::LessEqual:
 	{
 		if (lhsType->isIntegerTy())
-			return builder->CreateICmpULE(lhs, rhs, "cmptmp");
+			return builder->CreateICmpSLE(lhs, rhs, "cmptmp");
 		if (lhsType->isFloatingPointTy())
 			return builder->CreateFCmpULE(lhs, rhs, "cmptmp");
 		break;
@@ -654,7 +680,7 @@ llvm::Value* BinaryExpression::Generate()
 	case BinaryType::Greater:
 	{
 		if (lhsType->isIntegerTy())
-			return builder->CreateICmpUGT(lhs, rhs, "cmptmp");
+			return builder->CreateICmpSGT(lhs, rhs, "cmptmp");
 		if (lhsType->isFloatingPointTy())
 			return builder->CreateFCmpUGT(lhs, rhs, "cmptmp");
 		break;
@@ -662,7 +688,7 @@ llvm::Value* BinaryExpression::Generate()
 	case BinaryType::GreaterEqual:
 	{
 		if (lhsType->isIntegerTy())
-			return builder->CreateICmpUGE(lhs, rhs, "cmptmp");
+			return builder->CreateICmpSGE(lhs, rhs, "cmptmp");
 		if (lhsType->isFloatingPointTy())
 			return builder->CreateFCmpUGE(lhs, rhs, "cmptmp");
 		break;
@@ -671,11 +697,19 @@ llvm::Value* BinaryExpression::Generate()
 		ASSERT(false);
 	}
 
-	return builder->CreateBinOp(instruction, lhs, rhs);
+	llvm::Value* result = builder->CreateBinOp(instruction, lhs, rhs);
+
+	if (IsBinaryCompound(binaryType))
+		builder->CreateStore(result, unloadedLhs);
+
+	return result;
 }
 
 llvm::Value* CompoundStatement::Generate()
 {
+	if (type->IsArray()) // array create [...]
+		return CreateArrayAlloca(type->raw, children);
+
 	sCurrentScope = sCurrentScope->Deepen();
 
 	llvm::BasicBlock* previousBlock = builder->GetInsertBlock();
@@ -723,7 +757,8 @@ llvm::Value* BranchExpression::Generate()
 	if (branches.size() > 1)
 		falseBlock = generateBranch(branches[branches.size() - 1], "bfalse");
 
-	llvm::BranchInst* branchInst = builder->CreateCondBr(ifBranch.condition->Generate(), trueBlock, falseBlock);
+	llvm::Value* condition = ifBranch.condition->Generate();
+	llvm::BranchInst* branchInst = builder->CreateCondBr(condition, trueBlock, endBlock);
 	builder->SetInsertPoint(endBlock);
 
 	return branchInst;
@@ -740,7 +775,7 @@ llvm::Value* LoopExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	llvm::Type* indexType = llvm::Type::getInt64Ty(*context);
+	llvm::Type* indexType = llvm::Type::getInt32Ty(*context);
 	llvm::Type* arrayType = nullptr;
 	llvm::Value* arrayPtr = nullptr;
 
@@ -760,7 +795,7 @@ llvm::Value* LoopExpression::Generate()
 
 		if (!arrayType->isArrayTy())
 			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
-		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt64Ty(*context), llvm::APInt(64, arrayType->getArrayNumElements(), false));
+		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, arrayType->getArrayNumElements(), false));
 
 		iteratorType = range->type->GetContainedType();
 
@@ -773,7 +808,7 @@ llvm::Value* LoopExpression::Generate()
 		initialValue = builder->CreateLoad(initialValue);
 		builder->CreateStore(initialValue, iteratorValuePtr);
 
-		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(64, 0, false));
+		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(32, 0, false));
 		builder->CreateStore(zero, indexValuePtr);
 
 		iteratingArray = true;
@@ -1285,6 +1320,9 @@ static void ResolveParsedTypes(ParseResult& result)
 {
 	PROFILE_FUNCTION();
 
+	for (auto& expr : result.Module->children)
+		expr->ResolveType();
+
 	for (auto& pair : Type::RegisteredTypes)
 	{
 		Type* type = pair.second;
@@ -1308,14 +1346,10 @@ static void ResolveParsedTypes(ParseResult& result)
 
 Type* Type::GetContainedType() const
 {
-	Type* baseType = nullptr;
-	if (IsPointer())
-		baseType = contained;
+	ASSERT(contained);
+	ResolveType(*contained);
 
-	ASSERT(baseType);
-	ResolveType(*baseType);
-
-	return baseType;
+	return contained;
 }
 
 Type* Type::GetPointerTo()

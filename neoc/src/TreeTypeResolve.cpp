@@ -1,7 +1,7 @@
 #include "pch.h"
 
 #include "Tree.h"
-
+ 
 void UnaryExpression::ResolveType()
 {
 	operand->ResolveType();
@@ -26,19 +26,33 @@ void UnaryExpression::ResolveType()
 
 void BinaryExpression::ResolveType()
 {
+	left->ResolveType();
+	right->ResolveType();
+	type = left->type;
+
+	//if (binaryType == BinaryType::Subscript)
+	//	type = left->type->GetContainedType();
 }
 
 void CompoundStatement::ResolveType()
 {
+	for (auto& expr : children)
+		expr->ResolveType();
+}
+
+void LoopExpression::ResolveType()
+{
+	for (auto& expr : body)
+		expr->ResolveType();
 }
 
 void VariableDefinitionExpression::ResolveType()
 {
-}
-
-void ArrayInitializationExpression::ResolveType()
-{
-	//
+	if (initializer)
+	{
+		initializer->ResolveType();
+		type = initializer->type;
+	}
 }
 
 void ArrayDefinitionExpression::ResolveType()
@@ -49,8 +63,15 @@ void VariableAccessExpression::ResolveType()
 {
 }
 
+//void LoopExp
+
 void FunctionDefinitionExpression::ResolveType()
 {
+	for (auto& expr : body)
+		expr->ResolveType();
+
+	for (auto& expr : prototype.Parameters)
+		expr->ResolveType();
 }
 
 void FunctionCallExpression::ResolveType()
@@ -59,4 +80,6 @@ void FunctionCallExpression::ResolveType()
 
 void ReturnStatement::ResolveType()
 {
+	value->ResolveType();
+	type = value->type;
 }

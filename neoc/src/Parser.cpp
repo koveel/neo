@@ -80,7 +80,6 @@ static BinaryType GetBinaryType(TokenType type)
 	return (BinaryType)0;
 }
 
-// Higher priorities will be lower in the AST (hopefully?)
 static int GetBinaryPriority(BinaryType type)
 {
 	// TODO: confirm precedence is correct which it probably isnt cause im dumb
@@ -137,6 +136,7 @@ static std::unique_ptr<Expression> ParseLoop();
 static std::unique_ptr<Expression> ParseLoopControlFlow();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
+static std::unique_ptr<Expression> ParseArrayExpression();
 static std::unique_ptr<Expression> ParseArrayInitializer();
 static std::unique_ptr<Expression> ParseCompoundStatement();
 static std::unique_ptr<Expression> ParsePrimaryExpression();
@@ -159,10 +159,10 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 
 		bool done = type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority; // tf
 		if (newPriority == 0 || done)
-			return left;
-
-		Advance();  // Through operator
+			return left;		
 		
+		Advance();  // Through operator
+
 		auto binary = MakeExpression<BinaryExpression>(left->type);
 		binary->binaryType = type;
 		binary->operatorToken = token;
@@ -434,11 +434,13 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		}
 		case TokenType::LeftCurlyBracket:
 			return ParseCompoundStatement();
+		case TokenType::LeftSquareBracket:
+			return ParseArrayExpression();
 		case TokenType::Const: // TODO: const after id
 		case TokenType::ID:
 		{
-			if (parser->lexer->nextToken.type == TokenType::LeftSquareBracket)
-				return ParseArrayInitializer();
+			//if (parser->lexer->nextToken.type == TokenType::LeftSquareBracket)
+			//	return ParseArrayInitializer();
 
 			return ParseIdentifierExpression();
 		}
@@ -464,31 +466,40 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	return node;
 }
 
-static std::unique_ptr<Expression> ParseArrayInitializer()
+// [...]
+static std::unique_ptr<Expression> ParseArrayExpression()
 {
 	PROFILE_FUNCTION();
 
-	auto array = MakeExpression<ArrayInitializationExpression>();
-
 	Token* token = &parser->current;
-
-	Type* elementType = ParseType();
+	auto compound = MakeExpression<CompoundStatement>();
 
 	Advance(); // through [
 
+	// Parse the statements in the block
 	while (token->type != TokenType::RightSquareBracket && token->type != TokenType::Eof)
 	{
-		array->elements.push_back(ParseExpression(-1));
+		compound->children.push_back(ParseExpression(-1));
 
-		if (token->type != TokenType::RightSquareBracket)
-			Expect(TokenType::Comma, "expected ',' to separate array elements");
+		if (token->type != TokenType::RightSquareBracket) {
+			Expect(TokenType::Comma, "expected ',' to separate values in array");
+		}
+		else {
+			if (token->type == TokenType::Colon)
+				Advance();
+		}
 	}
 
-	array->type = ArrayType::Get(elementType, array->elements.size());
+	Expect(TokenType::RightSquareBracket, "expected ']' to end initializer");
 
-	Expect(TokenType::RightSquareBracket, "expected ']' to close array elements");
+	// Type
+	const auto& values = compound->children;
+	Type* elementType = values[0]->type;
+	uint64_t count = values.size();
 
-	return array;
+	compound->type = ArrayType::Get(elementType, count);
+
+	return compound;
 }
 
 // expects array type   []x
@@ -785,7 +796,7 @@ static std::unique_ptr<Expression> ParseLoop()
 	Advance(); // through for
 
 	auto loop = MakeExpression<LoopExpression>();
-	Expect(TokenType::LeftParen, "expected '(' after 'for'");
+	//Expect(TokenType::LeftParen, "expected '(' after 'for'");
 
 	Token iteratorToken = *current;
 	Expect(TokenType::ID, "expected identifier after '('");
@@ -797,7 +808,7 @@ static std::unique_ptr<Expression> ParseLoop()
 
 	loop->range = ParseExpression(-1);
 
-	Expect(TokenType::RightParen, "expected ')' after expression");
+	//Expect(TokenType::RightParen, "expected ')' after expression");
 
 	if (current->type != TokenType::LeftCurlyBracket)
 	{
@@ -888,11 +899,7 @@ static BranchExpression::Branch ParseBranch(uint32_t branchType)
 
 	// 'else' has no condition
 	if (branchType != 1)
-	{
-		Expect(TokenType::LeftParen, "expected '(' after %s", branchKeyword);
 		branch.condition = ParseExpression(-1);
-		Expect(TokenType::RightParen, "expected ')' after expression");
-	}
 
 	Token* current = &parser->current;
 	if (current->type != TokenType::LeftCurlyBracket)

@@ -140,6 +140,26 @@ struct BinaryExpression : public Expression
 	void ResolveType() override;
 };
 
+//struct SubscriptExpression : public Expression
+//{
+//	Token operatorToken;
+//	std::unique_ptr<Expression> operand = nullptr;
+//	std::vector<std::unique_ptr<Expression>> indices;
+//
+//	SubscriptExpression(uint32_t line)
+//		: Expression(line)
+//	{
+//		nodeType = GetNodeType();
+//	}
+//
+//	bool HasMultipleIndices() const { return indices.size() > 1; }
+//
+//	llvm::Value* Generate() override;
+//	static NodeType GetNodeType() { return NodeType::Subscript; }
+//
+//	void ResolveType() override;
+//};
+
 struct BranchExpression : public Expression
 {
 	// If, else, else if
@@ -194,6 +214,8 @@ struct LoopExpression : public Expression
 
 	llvm::Value* Generate() override;
 	static NodeType GetNodeType() { return NodeType::Loop; }
+
+	void ResolveType() override;
 };
 
 // Block of statements?? tf is this shit
@@ -232,29 +254,28 @@ struct VariableDefinitionExpression : public Expression
 };
 
 // [x, y, z]
-struct ArrayInitializationExpression : public Expression
-{
-	std::vector<std::unique_ptr<Expression>> elements;
-
-	ArrayInitializationExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
-	llvm::Value* Generate() override;
-	static NodeType GetNodeType() { return NodeType::ArrayInitialize; }
-
-	void ResolveType() override;
-};
+//struct ArrayInitializationExpression : public Expression
+//{
+//	std::vector<std::unique_ptr<Expression>> elements;
+//
+//	ArrayInitializationExpression(uint32_t line)
+//		: Expression(line)
+//	{
+//		nodeType = GetNodeType();
+//	}
+//
+//	llvm::Value* Generate() override;
+//	static NodeType GetNodeType() { return NodeType::ArrayInitialize; }
+//
+//	void ResolveType() override;
+//};
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
 struct ArrayDefinitionExpression : public Expression
 {
 	VariableDefinitionExpression* definition = nullptr;
 
-	uint64_t capacity = 0;
-	//std::unique_ptr<Expression> capacityExpr;
+	uint64_t capacity = 0; // todo: make expr
 	std::unique_ptr<Expression> initializer;
 
 	ArrayDefinitionExpression(uint32_t line)
