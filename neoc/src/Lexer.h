@@ -28,6 +28,7 @@ enum class TokenType : char
 	Null,
 	Import,
 	For, Continue, Break,
+	Cast,
 
 	// Misc
 	Percent, At, Hashtag, ID,
@@ -46,14 +47,15 @@ struct Token
 	uint32_t line = 0, length = 1;
 };
 
-struct Lexer
+class Lexer
 {
+public:
 	Lexer(const char* source);
 	
 	Token Next();
 
 	bool Expect(TokenType type); // Returns whether or not current is of type 'type'
-
+public:
 	// Used for peeking
 	Token previousToken, currentToken, nextToken;
 

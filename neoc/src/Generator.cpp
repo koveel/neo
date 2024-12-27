@@ -1,6 +1,8 @@
 #include "pch.h"
 
+#include "Lexer.h"
 #include "Tree.h"
+#include "Cast.h"
 #include "Generator.h"
 
 #include <llvm/IR/LLVMContext.h>
@@ -108,12 +110,27 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	}
 
 	bool isPointer = type->isPointerTy();
-	bool isString = type->getNumContainedTypes() == 1 && type->getContainedType(0)->isIntegerTy(8);
+	bool isString = (type->getNumContainedTypes() == 1 && type->getContainedType(0)->isIntegerTy(8)) && expr->type->IsString();
 
 	if (!isPointer || isString)
 		return value;
 
 	return builder->CreateLoad(value);
+}
+
+static llvm::Value* TryCastIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source)
+{
+	if (from == to)
+		return v;
+
+	Cast* cast = Cast::IsValid(from, to);
+	if (!cast)
+		throw CompileError(source->sourceLine, "cannot cast from '%s' to '%s'", from->GetName().c_str(), to->GetName().c_str());
+
+	if (isExplicit || cast->implicit)
+		return cast->Invoke(v);
+
+	throw CompileError(source->sourceLine, "cannot implicitly cast from '%s' to '%s'", from->GetName().c_str(), to->GetName().c_str());
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -169,6 +186,8 @@ static llvm::Value* GetNumericalConstant(llvm::Type* type, uint64_t value = 1)
 llvm::Value* PrimaryExpression::Generate()
 {
 	PROFILE_FUNCTION();
+
+	constexpr auto s = std::numeric_limits<uint32_t>::max();
 
 	switch (type->tag)
 	{
@@ -448,7 +467,10 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			initialVal = LoadIfPointer(initialVal, initializer.get());
 
 			initializerType = initialVal->getType();
-			type = initializer->type;
+			if (type)
+				initialVal = TryCastIfNecessary(initialVal, initializer->type, type, false, this);
+			else
+				type = initializer->type;
 		}
 	}
 
@@ -680,8 +702,11 @@ llvm::Value* BinaryExpression::Generate()
 	if (IsComparison(binaryType))
 		comparePredicate = LLVMCmpInstructionFromBinary(this);
 
-	ASSERT(left->type->GetSign() == right->type->GetSign()); // TODO: casts ?
 	type = left->type;
+	if (left->type != right->type)
+	{
+		rhs = TryCastIfNecessary(rhs, right->type, left->type, false, this);
+	}
 
 	llvm::Value* unloadedLhs = lhs;
 	// Unless assiging, treat variables as the underlying values
@@ -709,6 +734,21 @@ llvm::Value* BinaryExpression::Generate()
 		instruction = LLVMBinaryInstructionFromBinary(this);
 		break;
 	}
+	//case BinaryType::CompoundAdd:
+	//case BinaryType::Add:
+	//case BinaryType::CompoundSub:
+	//case BinaryType::Subtract:
+	//case BinaryType::CompoundDiv:
+	//case BinaryType::Divide:
+	//{
+	//	instruction = LLVMBinaryInstructionFromBinary(this);
+	//	break;
+	//}
+	//case BinaryType::CompoundMul:
+	//case BinaryType::Multiply:
+	//{
+	//	return builder->CreateMul(lhs, rhs);
+	//}
 	case BinaryType::Assign:
 	{
 		builder->CreateStore(rhs, lhs);
@@ -1017,12 +1057,24 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 	return sCurrentFunction;
 }
 
+llvm::Value* CastExpression::Generate()
+{
+	llvm::Value* value = LoadIfVariable(from->Generate(), from);
+
+	Cast* cast = Cast::IsValid(from->type, type);
+	if (!cast)
+		throw CompileError(sourceLine, "cannot cast from '%s' to '%s'", from->type->GetName().c_str(), type->GetName().c_str());
+
+	return cast->Invoke(value);
+}
+
 llvm::Value* ReturnStatement::Generate()
 {
+	type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
 	// In-place aggregate initialization
 	if (CompoundStatement* compound = To<CompoundStatement>(value))
 	{
-		type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
+		//type = FindNeoTypeFromLLVMType(sCurrentFunction->getReturnType());
 
 		llvm::Value* result = nullptr;
 		if (StructType* structType = type->IsStruct())
@@ -1044,7 +1096,7 @@ llvm::Value* ReturnStatement::Generate()
 
 	// Everything else
 	llvm::Value* generated = value->Generate();
-	generated = LoadIfVariable(generated, value);
+	generated = TryCastIfNecessary(LoadIfVariable(generated, value), value->type, type, false, this);
 
 	return builder->CreateRet(generated);
 }
@@ -1070,11 +1122,11 @@ llvm::Value* FunctionCallExpression::Generate()
 		value = LoadIfVariable(value, expr);
 
 		llvm::Type* expectedTy = function->getArg(i++)->getType();
-		if (expectedTy != value->getType())
-		{
-			throw CompileError(sourceLine, "invalid type for argument %d passed to '%s'", i - 1, name.c_str());
-		}
+		value = TryCastIfNecessary(value, expr->type, FindNeoTypeFromLLVMType(expectedTy), false, expr.get());
 
+		if (expectedTy != value->getType())
+			throw CompileError(sourceLine, "invalid type for argument %d passed to '%s'", i - 1, name.c_str());
+			
 		argValues.push_back(value);
 	}
 
@@ -1358,6 +1410,123 @@ static void VisitFunctionDefinitions(ParseResult& result)
 	}
 }
 
+namespace CastFunctions
+{
+	static llvm::Value* SInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return builder->CreateSExtOrTrunc(integer, to);
+	}
+	static llvm::Value* UInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return builder->CreateZExtOrTrunc(integer, to);
+	}
+
+	static llvm::Value* SInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return integer;
+	}
+	static llvm::Value* UInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return integer;
+	}
+
+	static llvm::Value* F32_To_F64(Cast&, llvm::Value* f32, llvm::Type* to) {
+		return builder->CreateFPExt(f32, to);
+	}
+
+	static llvm::Value* F64_To_F32(Cast&, llvm::Value* f64, llvm::Type* to) {
+		return builder->CreateFPTrunc(f64, to);
+	}
+
+	// Integer / floating point
+	static llvm::Value* SInteger_To_FP(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return builder->CreateSIToFP(integer, to);
+	}
+	static llvm::Value* UInteger_To_FP(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return builder->CreateUIToFP(integer, to);
+	}
+	static llvm::Value* FP_To_SInteger(Cast&, llvm::Value* f32, llvm::Type* to) {
+		return builder->CreateFPToSI(f32, to);
+	}
+	static llvm::Value* FP_To_UInteger(Cast&, llvm::Value* f32, llvm::Type* to) {
+		return builder->CreateFPToUI(f32, to);
+	}
+}
+
+static void InitPrimitiveCasts()
+{
+	Type* i8  = Type::Get(TypeTag::Int8);
+	Type* i16 = Type::Get(TypeTag::Int16);
+	Type* i32 = Type::Get(TypeTag::Int32);
+	Type* i64 = Type::Get(TypeTag::Int64);
+	Type* u8  = Type::Get(TypeTag::UInt8);
+	Type* u16 = Type::Get(TypeTag::UInt16);
+	Type* u32 = Type::Get(TypeTag::UInt32);
+	Type* u64 = Type::Get(TypeTag::UInt64);	
+
+	Type* f32 = Type::Get(TypeTag::Float32);
+	Type* f64 = Type::Get(TypeTag::Float64);
+	Type* b1  = Type::Get(TypeTag::Bool);
+	Type* ptr = Type::Get(TypeTag::Pointer);
+
+	Type* signedIntTypes[] = { i8, i16, i32, i64 };
+	Type* unsignedIntTypes[] = { u8, u16, u32, u64 };
+	Type* fpTypes[] = { f32, f64 };
+
+	const bool Allow_Int_X_FP_Implicitly   = true;
+	const bool Allow_Int_X_UInt_Implicitly = true;
+
+	for (Type* sint : signedIntTypes)
+	{
+		// Int / Int
+		for (Type* sint2 : signedIntTypes)
+		{
+			if (sint == sint2)
+				continue;
+
+			Cast::Add(sint, sint2, CastFunctions::SInteger_To_SInteger, true);
+			Cast::Add(sint2, sint, CastFunctions::SInteger_To_SInteger, true);
+		}
+
+		// Int / bool
+		Cast::Add(sint, b1, CastFunctions::SInteger_To_SInteger, true);
+		Cast::Add(b1, sint, CastFunctions::SInteger_To_SInteger, true);
+
+		// Int / FP
+		for (Type* fp : fpTypes)
+		{
+			Cast::Add(sint, fp, CastFunctions::SInteger_To_FP, Allow_Int_X_FP_Implicitly);
+			Cast::Add(fp, sint, CastFunctions::FP_To_SInteger, Allow_Int_X_FP_Implicitly);
+		}
+
+		// Int / UInt
+		for (Type* uint : unsignedIntTypes)
+		{
+			Cast::Add(sint, uint, CastFunctions::SInteger_To_UInteger, Allow_Int_X_UInt_Implicitly);
+			Cast::Add(uint, sint, CastFunctions::UInteger_To_SInteger, Allow_Int_X_UInt_Implicitly);
+		}
+	}
+	for (Type* uint : unsignedIntTypes)
+	{
+		// UInt / UInt
+		for (Type* uint2 : unsignedIntTypes)
+		{
+			if (uint == uint2)
+				continue;
+
+			Cast::Add(uint, uint2, CastFunctions::UInteger_To_UInteger, true);
+			Cast::Add(uint2, uint, CastFunctions::UInteger_To_UInteger, true);
+		}
+
+		// UInt / bool
+		Cast::Add(uint, b1, CastFunctions::SInteger_To_SInteger, true);
+		Cast::Add(b1, uint, CastFunctions::SInteger_To_SInteger, true);
+
+		// UInt / FP
+		for (Type* fp : fpTypes)
+		{
+			Cast::Add(uint, fp, CastFunctions::UInteger_To_FP, Allow_Int_X_FP_Implicitly);
+			Cast::Add(fp, uint, CastFunctions::FP_To_UInteger, Allow_Int_X_FP_Implicitly);
+		}
+	}
+}
+
 static void ResolveParsedTypes(ParseResult& result)
 {
 	PROFILE_FUNCTION();
@@ -1462,6 +1631,7 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 	try
 	{
 		ResolveParsedTypes(parseResult);
+		InitPrimitiveCasts();
 
 		sCurrentScope = new Scope();
 		// Codegen module

@@ -3,9 +3,9 @@
 
 #include "PlatformUtils.h"
 
+#include "Generator.h"
 #include "Tree.h"
 
-#include "Generator.h"
 #include "Emitter.h"
 
 static std::string ReadFile(const char* filepath)

@@ -1,6 +1,8 @@
 #include "pch.h"
 
+#include "Lexer.h"
 #include "Tree.h"
+#include "Cast.h"
 #include "Parser.h"
 
 #include "PlatformUtils.h"
@@ -133,6 +135,7 @@ static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 }
 
 static std::unique_ptr<Expression> ParseLoop();
+static std::unique_ptr<Expression> ParseCastExpression();
 static std::unique_ptr<Expression> ParseLoopControlFlow();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
@@ -348,6 +351,16 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	return ParsePrimaryExpression();
 }
 
+static Type* DetermineNumericTypeFromConstant(uint64_t v)
+{
+	constexpr auto i8 = std::numeric_limits<int8_t>::max();
+	constexpr auto i16 = std::numeric_limits<int16_t>::max();
+	constexpr auto i32 = std::numeric_limits<int32_t>::max();
+	constexpr auto i64 = std::numeric_limits<int64_t>::max();
+		
+	return v <= i32 ? Type::Get(TypeTag::Int32) : Type::Get(TypeTag::Int64);
+}
+
 static std::unique_ptr<Expression> ParsePrimaryExpression()
 {
 	PROFILE_FUNCTION();
@@ -414,8 +427,8 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			}
 			else
 			{
-				primary->value.i64 = (int64_t)strtol(token.start, nullptr, 0);
-				primary->type = Type::Get(TypeTag::Int32);
+				primary->value.u64 = (uint64_t)strtoull(token.start, nullptr, 0);
+				primary->type = DetermineNumericTypeFromConstant(primary->value.u64);
 			}
 			
 			return primary;
@@ -439,10 +452,11 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		case TokenType::Const: // TODO: const after id
 		case TokenType::ID:
 		{
-			//if (parser->lexer->nextToken.type == TokenType::LeftSquareBracket)
-			//	return ParseArrayInitializer();
-
 			return ParseIdentifierExpression();
+		}
+		case TokenType::Cast:
+		{
+			return ParseCastExpression();
 		}
 	}
 
@@ -772,6 +786,27 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 	Expect(TokenType::RightCurlyBracket, "expected '}' to end struct definition");
 
 	return structure;
+}
+
+static std::unique_ptr<Expression> ParseCastExpression()
+{
+	Advance(); // Through 'cast'
+
+	auto cast = MakeExpression<CastExpression>();
+	Expect(TokenType::LeftParen, "expected '(' after 'cast'");
+
+	if (parser->current.type != TokenType::ID)
+	{
+		LogError("expected identifier for type after '('");
+		return nullptr;
+	}
+
+	cast->type = ParseType();
+
+	Expect(TokenType::RightParen, "expected ')' after type");
+
+	cast->from = ParseExpression(-1);
+	return cast;
 }
 
 // break, continue

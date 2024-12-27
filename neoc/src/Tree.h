@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Lexer.h"
+//#include "Lexer.h"
 #include "Type.h"
 
 class llvm::Value;
@@ -10,7 +10,7 @@ enum class NodeType
 	Default = 1,
 	Compound,
 	Primary, String,
-	Unary, Binary,
+	Unary, Binary, Cast,
 	VariableDefinition, VariableAccess,
 	Branch, Loop, LoopControlFlow, Range, ArrayInitialize,
 	FunctionDefinition, FunctionCall, Return,
@@ -140,25 +140,22 @@ struct BinaryExpression : public Expression
 	void ResolveType() override;
 };
 
-//struct SubscriptExpression : public Expression
-//{
-//	Token operatorToken;
-//	std::unique_ptr<Expression> operand = nullptr;
-//	std::vector<std::unique_ptr<Expression>> indices;
-//
-//	SubscriptExpression(uint32_t line)
-//		: Expression(line)
-//	{
-//		nodeType = GetNodeType();
-//	}
-//
-//	bool HasMultipleIndices() const { return indices.size() > 1; }
-//
-//	llvm::Value* Generate() override;
-//	static NodeType GetNodeType() { return NodeType::Subscript; }
-//
-//	void ResolveType() override;
-//};
+struct CastExpression : public Expression
+{
+	Token token;
+	std::unique_ptr<Expression> from;
+
+	CastExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = GetNodeType();
+	}
+
+	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::Cast; }
+
+	void ResolveType() override;
+};
 
 struct BranchExpression : public Expression
 {
@@ -252,23 +249,6 @@ struct VariableDefinitionExpression : public Expression
 
 	void ResolveType() override;
 };
-
-// [x, y, z]
-//struct ArrayInitializationExpression : public Expression
-//{
-//	std::vector<std::unique_ptr<Expression>> elements;
-//
-//	ArrayInitializationExpression(uint32_t line)
-//		: Expression(line)
-//	{
-//		nodeType = GetNodeType();
-//	}
-//
-//	llvm::Value* Generate() override;
-//	static NodeType GetNodeType() { return NodeType::ArrayInitialize; }
-//
-//	void ResolveType() override;
-//};
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
 struct ArrayDefinitionExpression : public Expression

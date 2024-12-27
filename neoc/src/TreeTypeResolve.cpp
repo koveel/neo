@@ -1,7 +1,8 @@
 #include "pch.h"
 
+#include "Lexer.h"
 #include "Tree.h"
- 
+
 void UnaryExpression::ResolveType()
 {
 	operand->ResolveType();
@@ -55,6 +56,11 @@ void VariableDefinitionExpression::ResolveType()
 		//if (!type)
 		//	type = initializer->type;
 	}
+}
+
+void CastExpression::ResolveType()
+{
+
 }
 
 void ArrayDefinitionExpression::ResolveType()

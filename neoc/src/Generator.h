@@ -1,5 +1,6 @@
 #pragma once
 
+#include "Lexer.h"
 #include "Parser.h"
 #include "CmdLine/CommandLineArguments.h"
 

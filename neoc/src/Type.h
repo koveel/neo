@@ -23,12 +23,6 @@ class Type;
 class StructType;
 class ArrayType;
 
-static inline void hash_combine(std::size_t& seed, uint64_t v)
-{
-	std::hash<uint64_t> hasher;
-	seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
-}
-
 namespace std
 {
 	template<> struct hash<pair<TypeTag, Type*>>
@@ -74,6 +68,7 @@ public:
 	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
 	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
+	bool IsString() const { return tag == TypeTag::String; }
 	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
 
 	// De-pointerfy

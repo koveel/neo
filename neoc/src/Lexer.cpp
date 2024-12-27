@@ -364,6 +364,11 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Continue, 8);
 			return;
 		}
+		if (CheckKeyword("cast", 4))
+		{
+			*token = MakeToken(TokenType::Cast, 4);
+			return;
+		}
 		break;
 	}
 	case 'e':

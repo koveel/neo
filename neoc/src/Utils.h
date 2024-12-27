@@ -15,13 +15,6 @@ static std::string FormatString(const char* format, Args&&... args)
 }
 
 // check if a string contains a char up to a certain amount of characters
-static bool strnchr(const char* string, const char c, int n)
-{
-	for (int i = 0; i < n; i++)
-	{
-		if (string[i] == c)
-			return true;
-	}
+bool strnchr(const char* string, const char c, int n);
 
-	return false;
-}
+void hash_combine(std::size_t& seed, uint64_t v);

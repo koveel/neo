@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Lexer.h"
+class Lexer;
 
 struct ParseResult
 {

@@ -102,6 +102,7 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
+    <ClInclude Include="src\Cast.h" />
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
@@ -117,9 +118,11 @@
     <ClInclude Include="src\pch.h" />
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="src\Cast.cpp" />
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp" />
     <ClCompile Include="src\CmdLine\Main.cpp" />
     <ClCompile Include="src\Emitter.cpp" />
+    <ClCompile Include="src\Error.cpp" />
     <ClCompile Include="src\Generator.cpp" />
     <ClCompile Include="src\Lexer.cpp" />
     <ClCompile Include="src\Parser.cpp" />
@@ -129,6 +132,7 @@
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
+    <ClCompile Include="src\Utils.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">
