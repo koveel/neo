@@ -5,24 +5,24 @@
 
 void UnaryExpression::ResolveType()
 {
-	operand->ResolveType();
-	type = operand->type;
-
-	switch (unaryType)
-	{
-	case UnaryType::AddressOf:
-	{
-		type = type->GetPointerTo();
-		break;
-	}
-	case UnaryType::Deref:
-	{
-		type = type->GetContainedType();
-		break;
-	}
-	default:
-		break;
-	}
+	//operand->ResolveType();
+	//type = operand->type;
+	//
+	//switch (unaryType)
+	//{
+	//case UnaryType::AddressOf:
+	//{
+	//	type = type->GetPointerTo();
+	//	break;
+	//}
+	//case UnaryType::Deref:
+	//{
+	//	type = type->GetContainedType();
+	//	break;
+	//}
+	//default:
+	//	break;
+	//}
 }
 
 void BinaryExpression::ResolveType()

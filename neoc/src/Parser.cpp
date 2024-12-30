@@ -256,7 +256,7 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	}
 
 	// For convenience
-	auto makeUnary = [token](UnaryType type, int priority = -1) -> std::unique_ptr<Expression>
+	auto makeUnary = [token](UnaryType type, int priority = -1)
 	{
 		auto unary = MakeExpression<UnaryExpression>();
 		unary->operatorToken = *token;
@@ -795,17 +795,11 @@ static std::unique_ptr<Expression> ParseCastExpression()
 	auto cast = MakeExpression<CastExpression>();
 	Expect(TokenType::LeftParen, "expected '(' after 'cast'");
 
-	if (parser->current.type != TokenType::ID)
-	{
-		LogError("expected identifier for type after '('");
-		return nullptr;
-	}
-
 	cast->type = ParseType();
 
 	Expect(TokenType::RightParen, "expected ')' after type");
 
-	cast->from = ParseExpression(-1);
+	cast->from = ParseExpression(29);
 	return cast;
 }
 

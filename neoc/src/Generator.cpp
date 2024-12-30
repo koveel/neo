@@ -14,8 +14,6 @@
 #include "PlatformUtils.h"
 
 /* TODO:
-			Handle signs
-Casting
 Array = instance of array struct, no length needed if []x is a function parameter
 Loop control flow (break/continue)
 
@@ -93,6 +91,11 @@ static llvm::Value* LoadIfVariable(llvm::Value* generated, std::unique_ptr<Expre
 		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
 			return generated;
 	}
+	if (auto cast = To<CastExpression>(expr))
+	{
+		if (cast->type->IsPointer()) // Casting to pointer
+			return generated;
+	}
 
 	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
@@ -106,6 +109,11 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	if (auto unary = To<UnaryExpression>(expr))
 	{
 		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
+			return value;
+	}
+	if (auto cast = To<CastExpression>(expr))
+	{
+		if (cast->type->IsPointer()) // Casting to pointer
 			return value;
 	}
 
@@ -317,9 +325,16 @@ llvm::Value* UnaryExpression::Generate()
 	}
 	case UnaryType::Deref:
 	{
-		type = type->contained;
-		llvm::Value* loaded = builder->CreateLoad(value);
-		return loaded;
+		type = type->GetContainedType();
+
+		bool load = true;
+		if (CastExpression* cast = To<CastExpression>(operand))
+		{
+			if (cast->type->IsPointer())
+				load = false;
+		}
+
+		return load ? builder->CreateLoad(value) : value;
 	}
 	}
 
@@ -734,21 +749,6 @@ llvm::Value* BinaryExpression::Generate()
 		instruction = LLVMBinaryInstructionFromBinary(this);
 		break;
 	}
-	//case BinaryType::CompoundAdd:
-	//case BinaryType::Add:
-	//case BinaryType::CompoundSub:
-	//case BinaryType::Subtract:
-	//case BinaryType::CompoundDiv:
-	//case BinaryType::Divide:
-	//{
-	//	instruction = LLVMBinaryInstructionFromBinary(this);
-	//	break;
-	//}
-	//case BinaryType::CompoundMul:
-	//case BinaryType::Multiply:
-	//{
-	//	return builder->CreateMul(lhs, rhs);
-	//}
 	case BinaryType::Assign:
 	{
 		builder->CreateStore(rhs, lhs);
@@ -1059,13 +1059,17 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 llvm::Value* CastExpression::Generate()
 {
-	llvm::Value* value = LoadIfVariable(from->Generate(), from);
+	llvm::Value* value = LoadIfPointer(from->Generate(), from);
 
-	Cast* cast = Cast::IsValid(from->type, type);
+	bool useTag = false;
+	if (type->IsPointer() || from->type->IsPointer())
+		useTag = true;
+
+	Cast* cast = useTag ? Cast::IsValid(from->type->tag, type->tag) : Cast::IsValid(from->type, type);
 	if (!cast)
 		throw CompileError(sourceLine, "cannot cast from '%s' to '%s'", from->type->GetName().c_str(), type->GetName().c_str());
 
-	return cast->Invoke(value);
+	return cast->Invoke(value, this);
 }
 
 llvm::Value* ReturnStatement::Generate()
@@ -1231,7 +1235,7 @@ static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 	PROFILE_FUNCTION();
 
 	// Already resolved?
-	if (type.raw)
+ 	if (type.raw)
 		return;
 
 	if (type.IsPointer())
@@ -1412,6 +1416,7 @@ static void VisitFunctionDefinitions(ParseResult& result)
 
 namespace CastFunctions
 {
+	// Int / int
 	static llvm::Value* SInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
 		return builder->CreateSExtOrTrunc(integer, to);
 	}
@@ -1426,6 +1431,7 @@ namespace CastFunctions
 		return integer;
 	}
 
+	// Float / float
 	static llvm::Value* F32_To_F64(Cast&, llvm::Value* f32, llvm::Type* to) {
 		return builder->CreateFPExt(f32, to);
 	}
@@ -1447,6 +1453,18 @@ namespace CastFunctions
 	static llvm::Value* FP_To_UInteger(Cast&, llvm::Value* f32, llvm::Type* to) {
 		return builder->CreateFPToUI(f32, to);
 	}
+
+	// Ptr / int
+	static llvm::Value* Pointer_To_Integer(Cast&, llvm::Value* ptr, llvm::Type* to) {
+		return builder->CreatePtrToInt(ptr, to);
+	}
+	static llvm::Value* Integer_To_Pointer(Cast&, llvm::Value* integer, llvm::Type* to) {
+		return builder->CreateIntToPtr(integer, to);
+	}
+
+	static llvm::Value* Pointer_To_Pointer(Cast&, llvm::Value* ptr, llvm::Type* to) {
+		return builder->CreatePointerCast(ptr, to);
+	}
 }
 
 static void InitPrimitiveCasts()
@@ -1459,7 +1477,6 @@ static void InitPrimitiveCasts()
 	Type* u16 = Type::Get(TypeTag::UInt16);
 	Type* u32 = Type::Get(TypeTag::UInt32);
 	Type* u64 = Type::Get(TypeTag::UInt64);	
-
 	Type* f32 = Type::Get(TypeTag::Float32);
 	Type* f64 = Type::Get(TypeTag::Float64);
 	Type* b1  = Type::Get(TypeTag::Bool);
@@ -1471,6 +1488,13 @@ static void InitPrimitiveCasts()
 
 	const bool Allow_Int_X_FP_Implicitly   = true;
 	const bool Allow_Int_X_UInt_Implicitly = true;
+
+	Cast::Add(TypeTag::Pointer, TypeTag::Int64,   CastFunctions::Pointer_To_Integer, false);
+	Cast::Add(TypeTag::Int64,   TypeTag::Pointer, CastFunctions::Integer_To_Pointer, false);
+	Cast::Add(TypeTag::Bool,    TypeTag::Pointer, CastFunctions::Integer_To_Pointer, true);
+	Cast::Add(TypeTag::Pointer, TypeTag::Bool,    CastFunctions::Pointer_To_Integer, true);
+
+	Cast::Add(TypeTag::Pointer, TypeTag::Pointer, CastFunctions::Pointer_To_Pointer, false);
 
 	for (Type* sint : signedIntTypes)
 	{
@@ -1558,7 +1582,8 @@ static void ResolveParsedTypes(ParseResult& result)
 Type* Type::GetContainedType() const
 {
 	ASSERT(contained);
-	ResolveType(*contained);
+	if (context)
+		ResolveType(*contained);
 
 	return contained;
 }
@@ -1566,7 +1591,8 @@ Type* Type::GetContainedType() const
 Type* Type::GetPointerTo()
 {
 	Type* pointerTy = Type::Get(TypeTag::Pointer, this);
-	ResolveType(*pointerTy);
+	if (context)
+		ResolveType(*pointerTy);
 
 	return pointerTy;
 }
@@ -1574,7 +1600,8 @@ Type* Type::GetPointerTo()
 ArrayType* Type::GetArrayTypeOf(uint64_t count)
 {
 	ArrayType* arrayTy = ArrayType::Get(this, count);
-	//ResolveType(arrayTy->name, *arrayTy);
+	if (context)
+		ResolveArrayType(*arrayTy);
 
 	return arrayTy;
 }
