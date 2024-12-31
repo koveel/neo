@@ -89,6 +89,25 @@ public:
 	static std::unordered_map<Key, Type*> RegisteredTypes;
 };
 
+class PolyType : public Type
+{
+public:
+	using Type::Type;
+
+	PolyType(const std::string& name)
+		: name(name)
+	{}
+
+	virtual std::string GetName() { return name; }
+
+	static PolyType* Get(const std::string& name);
+public:
+	Type* underlying = nullptr;
+	std::string name;
+
+	static std::unordered_map<std::string, PolyType*> RegisteredTypes;
+};
+
 class StructType : public Type
 {
 public:

@@ -439,7 +439,6 @@ static void AggregateInitializeStructMembers(llvm::Value* structPtr, StructType*
 llvm::Value* VariableDefinitionExpression::Generate()
 {
 	llvm::Value* initialVal = nullptr;
-	llvm::Type* initializerType = nullptr;
 
 	bool aggregateInitialization = false;
 	CompoundStatement* aggregateInitializer = nullptr;
@@ -463,15 +462,16 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			{
 				// aggregate init
 				CompoundStatement* compound = To<CompoundStatement>(initializer);
-				if (compound->type->IsArray()) // [...]
+				aggregateInitializer = compound;
+				aggregateInitialization = true;
+
+				if (compound->type && compound->type->IsArray()) // [...]
 				{
 					llvm::Value* initializer = CreateArrayAlloca(compound->type->raw, compound->children);
 					sCurrentScope->AddValue(name, { type = compound->type, initializer });
 					return initializer;
 				}
 
-				aggregateInitializer = compound;
-				aggregateInitialization = true;
 				break;
 			}
 		}
@@ -481,7 +481,6 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			initialVal = initializer->Generate();
 			initialVal = LoadIfPointer(initialVal, initializer.get());
 
-			initializerType = initialVal->getType();
 			if (type)
 				initialVal = TryCastIfNecessary(initialVal, initializer->type, type, false, this);
 			else
@@ -515,34 +514,55 @@ llvm::Value* VariableDefinitionExpression::Generate()
 		if (type->IsArray())
 			return alloc;
 	}
-	builder->CreateStore(initialVal, alloc);
 
+	builder->CreateStore(initialVal, alloc);
 	return alloc;
 }
 
-// todo: improve
 static Type* FindNeoTypeFromLLVMType(llvm::Type* type)
 {
 	PROFILE_FUNCTION();
 
-	for (auto& pair : Type::RegisteredTypes)
+	switch (type->getTypeID())
 	{
-		if (pair.second->raw == type)
-			return pair.second;
+	case llvm::Type::FloatTyID:
+		return Type::Get(TypeTag::Float32);
+	case llvm::Type::DoubleTyID:
+		return Type::Get(TypeTag::Float64);
+	case llvm::Type::IntegerTyID:
+	{
+		llvm::IntegerType* iType = llvm::cast<llvm::IntegerType>(type);
+		uint32_t bitWidth = iType->getBitWidth();
+
+		if (bitWidth == 1) return Type::Get(TypeTag::Bool);
+
+		TypeTag tags[] {
+			TypeTag::Int8, TypeTag::Int16, TypeTag::Int32, TypeTag::Int64,
+		};
+
+		return Type::Get(tags[(uint32_t)log2(bitWidth) - 3]);
 	}
-	for (auto& pair : ArrayType::RegisteredTypes)
+	case llvm::Type::PointerTyID:
 	{
-		if (pair.second->raw == type)
-			return pair.second;
+		Type* contained = FindNeoTypeFromLLVMType(type->getContainedType(0));
+		return Type::Get(TypeTag::Pointer, contained);
 	}
-	for (auto& pair : StructType::RegisteredTypes)
+	case llvm::Type::ArrayTyID:
 	{
-		if (pair.second->raw == type)
-			return pair.second;
+		Type* contained = FindNeoTypeFromLLVMType(type->getArrayElementType());
+		return ArrayType::Get(contained, type->getArrayNumElements());
+	}
+	case llvm::Type::StructTyID:
+	{
+		for (auto& pair : StructType::RegisteredTypes)
+		{
+			if (pair.second->raw == type)
+				return pair.second;
+		}
+	}
 	}
 
-	if (type->isPointerTy())
-		return FindNeoTypeFromLLVMType(type->getContainedType(0));
+	ASSERT(false);
 }
 
 static uint32_t GetTypePointerDepth(llvm::Type* type)
@@ -718,10 +738,6 @@ llvm::Value* BinaryExpression::Generate()
 		comparePredicate = LLVMCmpInstructionFromBinary(this);
 
 	type = left->type;
-	if (left->type != right->type)
-	{
-		rhs = TryCastIfNecessary(rhs, right->type, left->type, false, this);
-	}
 
 	llvm::Value* unloadedLhs = lhs;
 	// Unless assiging, treat variables as the underlying values
@@ -730,6 +746,11 @@ llvm::Value* BinaryExpression::Generate()
 		lhs = LoadIfVariable(lhs, left);
 	}
 	rhs = LoadIfVariable(rhs, right);
+
+	if (left->type != right->type)
+	{
+		rhs = TryCastIfNecessary(rhs, right->type, left->type, false, this);
+	}
 
 	llvm::Type* lhsType = lhs->getType();
 	llvm::Type* rhsType = rhs->getType();
@@ -1172,6 +1193,7 @@ static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Struct
 	return std::numeric_limits<uint32_t>::max();
 }
 
+// TODO: cleanup ?
 static void AggregateInitializeStructMembers(llvm::Value* structPtr, StructType* type, CompoundStatement* initializer)
 {
 	PROFILE_FUNCTION();
@@ -1181,33 +1203,54 @@ static void AggregateInitializeStructMembers(llvm::Value* structPtr, StructType*
 	std::vector<uint32_t> initializedMembers;
 	initializedMembers.reserve(initializer->children.size());
 
+	bool usedNamedInitialization = false;
+	uint32_t i = 0;
 	for (auto& expr : initializer->children)
 	{
-		BinaryExpression* binary = nullptr;
-		if (!(binary = To<BinaryExpression>(expr)))
-			throw CompileError(expr->sourceLine, "expected binary expression for aggregate struct initialization");
-		if (binary->binaryType != BinaryType::Assign)
-			throw CompileError(expr->sourceLine, "expected member assignment for aggregate struct initialization");
+		if (auto binary = To<BinaryExpression>(expr))
+		{
+			if (binary->binaryType != BinaryType::Assign)
+				throw CompileError(expr->sourceLine, "expected binary assignment expression");
 
-		// Why tf is concise binary a binary
-		BinaryExpression* conciseBinary = To<BinaryExpression>(binary->left);
-		ASSERT(conciseBinary);
-		if (conciseBinary->binaryType != BinaryType::ConciseMemberAccess)
-			throw CompileError(conciseBinary->sourceLine, "expected concise member access \".member\" for lhs of initializer");
-		VariableAccessExpression* variable = To<VariableAccessExpression>(conciseBinary->right);
+			// Why tf is concise binary a binary
+			auto concise = To<BinaryExpression>(binary->left);
+			ASSERT(concise);
 
-		uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, type);
-		if (memberIndex == std::numeric_limits<uint32_t>::max())
-			throw CompileError(expr->sourceLine, "member '%s' doesn't exist in struct '%s'", variable->name.c_str(), type->GetName().c_str());
-		
-		if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
-			throw CompileError(expr->sourceLine, "member '%s' appears multiple times in aggregate initializer. can only assign to it once", variable->name.c_str());
+			if (concise->binaryType != BinaryType::ConciseMemberAccess)
+				throw CompileError(concise->sourceLine, "expected concise member access \".member\" for lhs of initializer");
 
-		initializedMembers.push_back(memberIndex);
+			VariableAccessExpression* variable = To<VariableAccessExpression>(concise->right);
+			ASSERT(variable);
 
-		llvm::Value* value = LoadIfVariable(binary->right->Generate(), binary->right);
-		llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, memberIndex);
-		builder->CreateStore(value, memberPtr);
+			uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, type);
+			if (memberIndex == std::numeric_limits<uint32_t>::max())
+				throw CompileError(expr->sourceLine, "member '%s' doesn't exist in struct '%s'", variable->name.c_str(), type->GetName().c_str());
+
+			if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
+				throw CompileError(expr->sourceLine, "member '%s' appears multiple times in aggregate initializer. can only assign to it once", variable->name.c_str());
+			initializedMembers.push_back(memberIndex);
+
+			llvm::Value* value = LoadIfVariable(binary->right->Generate(), binary->right);
+			llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, memberIndex);
+
+			value = TryCastIfNecessary(value, binary->right->type, type->members[memberIndex], false, binary->right.get());
+
+			builder->CreateStore(value, memberPtr);
+
+			usedNamedInitialization = true;
+		}
+		else
+		{
+			if (usedNamedInitialization)
+				throw CompileError(expr->sourceLine, "if using named initialization \".member = x\", must use it for all subsequent initializations");
+
+			llvm::Value* value = LoadIfVariable(expr->Generate(), expr);
+			uint32_t memberIndex = i++;
+
+			value = TryCastIfNecessary(value, expr->type, type->members[memberIndex], false, expr.get());
+			llvm::Value* memberPtr = builder->CreateStructGEP(structPtr, memberIndex);
+			builder->CreateStore(value, memberPtr);
+		}
 	}
 }
 
@@ -1235,7 +1278,7 @@ static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 	PROFILE_FUNCTION();
 
 	// Already resolved?
- 	if (type.raw)
+	if (type.raw)
 		return;
 
 	if (type.IsPointer())
@@ -1309,6 +1352,9 @@ static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
 	// Already resolved?
 	if (type.raw)
 		return;
+
+	if (!type.definition)
+		throw CompileError(possibleSourceLine, "type '%s' not defined", type.name.c_str());
 
 	auto& members = type.definition->members;
 

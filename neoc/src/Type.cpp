@@ -5,6 +5,7 @@
 std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
 std::unordered_map<std::string, StructType*> StructType::RegisteredTypes;
 std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
+std::unordered_map<std::string, PolyType*> PolyType::RegisteredTypes;
  
 static const std::pair<TypeTag, const char*> TagToStringMap[] =
 {
@@ -89,7 +90,9 @@ Type* Type::Get(const std::string& name, Type* contained)
 {
 	ASSERT(name.length());
 
-	return Get(TagFromString(name.c_str()), contained);
+	TypeTag tag = TagFromString(name.c_str());
+
+	return tag != TypeTag::Unresolved ? Get(tag, contained) : StructType::Get(name);
 }
 
 StructType* StructType::Get(const std::string& name, const std::vector<Type*>& members)
@@ -107,4 +110,12 @@ ArrayType* ArrayType::Get(Type* elementType, uint64_t count)
 		return RegisteredTypes[key];
 
 	return RegisteredTypes[key] = new ArrayType(elementType, count);
+}
+
+PolyType* PolyType::Get(const std::string& name)
+{
+	if (RegisteredTypes.count(name))
+		return RegisteredTypes[name];
+
+	return RegisteredTypes[name] = new PolyType(name);
 }

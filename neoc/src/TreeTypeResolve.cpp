@@ -27,9 +27,9 @@ void UnaryExpression::ResolveType()
 
 void BinaryExpression::ResolveType()
 {
-	left->ResolveType();
-	right->ResolveType();
-	type = left->type;
+	//left->ResolveType();
+	//right->ResolveType();
+	//type = left->type;
 
 	//if (binaryType == BinaryType::Subscript)
 	//	type = left->type->GetContainedType();

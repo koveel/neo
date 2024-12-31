@@ -236,6 +236,12 @@ static Type* ParseType()
 	std::string typeName = { token->start, token->length };
 	Advance();
 
+	if (token->type == TokenType::QuestionMark)
+	{
+		Advance();
+		return PolyType::Get(typeName);
+	}
+
 	return Type::Get(typeName);
 }
 
@@ -753,6 +759,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 
 	StructType* type = StructType::Get(structName);
 	structure->type = type;
+	type->definition = structure.get();
 
 	Expect(TokenType::LeftCurlyBracket, "expected '{' after 'struct'");
 
@@ -761,10 +768,12 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 		auto member = ParseVariableDefinitionStatement();
 
 		// Cast to VariableDefinitionStatement
-		auto tmp = dynamic_cast<VariableDefinitionExpression*>(member.get());
+		auto tmp = static_cast<VariableDefinitionExpression*>(member.get());
 		std::unique_ptr<VariableDefinitionExpression> variable;
 		member.release();
 		variable.reset(tmp);
+
+		// TODO: use 1 vector for both
 
 		// multi line type sh
 		for (const auto& name : variable->succeedingDefinitionNames)
@@ -773,12 +782,20 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 			var->type = variable->type;
 			var->initializer = variable->initializer;
 			var->name = name;
+
+			type->members.push_back(var->type);
 			structure->members.push_back(std::move(var));
 		}
 		if (variable->succeedingDefinitionNames.size())
+		{
+			type->members.insert(type->members.begin(), variable->type);
 			structure->members.insert(structure->members.begin(), std::move(variable));
+		}
 		else
+		{
+			type->members.push_back(variable->type);
 			structure->members.push_back(std::move(variable));
+		}
 
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}
