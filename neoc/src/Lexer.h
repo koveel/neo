@@ -7,16 +7,27 @@ enum class TokenType : char
 	// Brackets
 	LeftParen, RightParen, LeftCurlyBracket, RightCurlyBracket, LeftSquareBracket, RightSquareBracket,
 	
-	// Single character
-	Plus, Dash, Star, Equal, Exclamation, ForwardSlash, Tilde,
+	Plus, Dash, Star, Exclamation, ForwardSlash,
 	BackSlash, Quotation, Dot, Comma, QuestionMark, 
-	DoubleEqual, ExclamationEqual, Greater, GreaterEqual, Less, LessEqual,
+	Equal, DoubleEqual, ExclamationEqual, Greater, GreaterEqual, Less, LessEqual,
+	Pipe, PipeEqual, DoublePipe,
+	Ampersand, AmpersandEqual, DoubleAmpersand,
+
+	// Bitwise
+	Tilde,
+	DoubleLess, DoubleLessEqual,
+	DoubleGreater, DoubleGreaterEqual,
+	Xor, XorEqual,
+
+	Percent, PercentEqual,
+	At, Hashtag, ID,
+	RightArrow, Ellipsis, MiniEllipsis,
 
 	// Compound assignment and whatnot
 	PlusEqual, DashEqual, StarEqual, ForwardSlashEqual,
 	Increment, Decrement,
 
-	// Colon stuff... ew
+	// Colons
 	Colon, DoubleColon, Semicolon, WalrusTeeth,
 
 	// Keywords
@@ -29,12 +40,7 @@ enum class TokenType : char
 	Import,
 	For, Continue, Break,
 	Cast,
-
-	// Misc
-	Percent, At, Hashtag, ID,
-	Pipe, DoublePipe,
-	Ampersand, DoubleAmpersand,
-	RightArrow, Ellipsis, MiniEllipsis,
+	
 
 	// Literals
 	String, Number,

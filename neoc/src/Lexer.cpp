@@ -217,7 +217,17 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::LessEqual, 2); 
 			return;
 		}
-		*token = MakeToken(TokenType::LessEqual, 1); 
+		if (lexer->current[1] == '<')
+		{
+			if (lexer->current[2] == '=')
+				*token = MakeToken(TokenType::DoubleLessEqual, 3);
+			else
+				*token = MakeToken(TokenType::DoubleLess, 2);
+
+			return;
+		}
+
+		*token = MakeToken(TokenType::Less, 1);
 		return;
 	}
 	case '>':
@@ -227,18 +237,41 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::GreaterEqual, 2); 
 			return;
 		}
-		*token = MakeToken(TokenType::Greater, 1); 
+		if (lexer->current[1] == '>')
+		{
+			if (lexer->current[2] == '=')
+				*token = MakeToken(TokenType::DoubleGreaterEqual, 3);
+			else
+				*token = MakeToken(TokenType::DoubleGreater, 2);
+
+			return;
+		}
+
+		*token = MakeToken(TokenType::Greater, 1);
+		return;
+	}
+	case '^':
+	{
+		if (lexer->current[1] == '=')
+		{
+			*token = MakeToken(TokenType::XorEqual, 2);
+			return;
+		}
+
+		*token = MakeToken(TokenType::Xor, 1);
 		return;
 	}
 	case '~':  *token = MakeToken(TokenType::Tilde, 1); return;
 	case '+':
 	{
-		switch (lexer->current[1])
-		{
-		case '+': *token = MakeToken(TokenType::Increment, 2); return;
-		case '=': *token = MakeToken(TokenType::PlusEqual, 2); return;
-		default: *token = MakeToken(TokenType::Plus, 1); return;
-		}
+		if (lexer->current[1] == '+')
+			*token = MakeToken(TokenType::Increment, 2);
+		else if (lexer->current[1] == '=')
+			*token = MakeToken(TokenType::PlusEqual, 2);
+		else
+			*token = MakeToken(TokenType::Plus, 1);
+
+		return;
 	}
 	case '-':
 	{
@@ -247,7 +280,7 @@ static void ProcessToken(Token* token)
 		case '-': *token = MakeToken(TokenType::Decrement, 2); return;
 		case '=': *token = MakeToken(TokenType::DashEqual, 2); return;
 		case '>': *token = MakeToken(TokenType::RightArrow, 2); return;
-		default: *token = MakeToken(TokenType::Dash, 1); return;
+		default:  *token = MakeToken(TokenType::Dash, 1); return;
 		}
 	}
 	case '*':
@@ -257,6 +290,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::StarEqual, 2);
 			return;
 		}
+
 		*token = MakeToken(TokenType::Star, 1); 
 		return;
 	}
@@ -267,6 +301,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::ForwardSlashEqual, 2); 
 			return;
 		}
+
 		*token = MakeToken(TokenType::ForwardSlash, 1); 
 		return;
 	}
@@ -278,6 +313,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::DoubleEqual, 2); 
 			return;
 		}
+
 		*token = MakeToken(TokenType::Equal, 1); 
 		return;
 	}
@@ -288,21 +324,26 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::ExclamationEqual, 2); 
 			return;
 		}
-		*token = MakeToken(TokenType::Exclamation, 1); 
+
+		*token = MakeToken(TokenType::Exclamation, 1);
 		return;
 	}
 	case ':':
 	{
-		switch (lexer->current[1])
-		{
-		case ':': *token = MakeToken(TokenType::DoubleColon, 2); return;
-		case '=': *token = MakeToken(TokenType::WalrusTeeth, 2); return;
-		default:
-			*token = MakeToken(TokenType::Colon, 1); 
-			return;
-		}
+		if (lexer->current[1] == ':')
+			*token = MakeToken(TokenType::DoubleColon, 2);
+		else if (lexer->current[1] == '=')
+			*token = MakeToken(TokenType::WalrusTeeth, 2);
+		else
+			*token = MakeToken(TokenType::Colon, 1);
+
+		return;
 	}
-	case ';': *token = MakeToken(TokenType::Semicolon, 1); return;
+	case ';':
+	{
+		*token = MakeToken(TokenType::Semicolon, 1);
+		return;
+	}
 	case '.':
 	{
 		if (lexer->current[1] == '.')
@@ -315,28 +356,49 @@ static void ProcessToken(Token* token)
 		else {
 			*token = MakeToken(TokenType::Dot, 1); 
 		}
+
 		return;
 	}
-	case ',':  *token = MakeToken(TokenType::Comma, 1); return;
-	case '?':  *token = MakeToken(TokenType::QuestionMark, 1); return;
-
+	case ',': *token = MakeToken(TokenType::Comma, 1); return;
+	case '?': *token = MakeToken(TokenType::QuestionMark, 1); return;
 	case '&': 
 	{
 		if (lexer->current[1] == '&')
+		{
 			*token = MakeToken(TokenType::DoubleAmpersand, 2);
+		}
 		else
-			*token = MakeToken(TokenType::Ampersand, 1);
+		{
+			if (lexer->current[2] == '=')
+				*token = MakeToken(TokenType::AmpersandEqual, 2);
+			else
+				*token = MakeToken(TokenType::Ampersand, 1);
+
+			return;
+		}
+
 		return;
 	}
 	case '|':
 	{
 		if (lexer->current[1] == '|')
 			*token = MakeToken(TokenType::DoublePipe, 2);
+		else if (lexer->current[1] == '=')
+			*token = MakeToken(TokenType::PipeEqual, 2);
 		else
 			*token = MakeToken(TokenType::Pipe, 1);
+
 		return;
 	}
-	case '%': *token = MakeToken(TokenType::Percent, 1); return;
+	case '%':
+	{
+		if (lexer->current[1] == '=')
+			*token = MakeToken(TokenType::PercentEqual, 2);
+		else
+			*token = MakeToken(TokenType::Percent, 1);
+
+		return;
+	}
 	case '@': *token = MakeToken(TokenType::At, 1); return;
 	case '#': *token = MakeToken(TokenType::Hashtag, 1); return;
 
@@ -350,6 +412,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Break, 5);
 			return;
 		}
+
 		break;
 	}
 	case 'c':
@@ -369,6 +432,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Cast, 4);
 			return;
 		}
+
 		break;
 	}
 	case 'e':
@@ -378,6 +442,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Else, 4);
 			return;
 		}
+
 		break;
 	}
 	case 'f':
@@ -392,6 +457,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::For, 3);
 			return;
 		}
+
 		break;
 	}
 	case 'i':
@@ -406,6 +472,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Import, 6);
 			return;
 		}
+
 		break;
 	}
 	case 'n':
@@ -415,6 +482,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Null, 4);
 			return;
 		}
+
 		break;
 	}
 	case 'r':
@@ -424,6 +492,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Return, 6);
 			return;
 		}
+
 		break;
 	}
 	case 's':
@@ -433,6 +502,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Struct, 6);
 			return;
 		}
+
 		break;
 	}
 	case 't':
@@ -442,6 +512,7 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::True, 4);
 			return;
 		}
+
 		break;
 	}
 	}
@@ -468,8 +539,7 @@ static void ProcessToken(Token* token)
 	// Unknown token
 	Advance(1);
 
-	//throw ParseError("unexpected token '%.*s'", 6, lexer->start);
-	LogError("unexpected token '%.*s'", 6, lexer->start);
+	LogError("unexpected token '{}'", std::string_view(lexer->start, 6));
 }
 
 Token Lexer::Next()

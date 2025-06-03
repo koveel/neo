@@ -66,7 +66,7 @@
       <MinimalRebuild>false</MinimalRebuild>
       <RuntimeLibrary>MultiThreadedDebugDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
     <Link>
@@ -90,7 +90,7 @@
       <StringPooling>true</StringPooling>
       <RuntimeLibrary>MultiThreadedDLL</RuntimeLibrary>
       <MultiProcessorCompilation>true</MultiProcessorCompilation>
-      <LanguageStandard>stdcpp17</LanguageStandard>
+      <LanguageStandard>stdcpp20</LanguageStandard>
       <ExternalWarningLevel>Level3</ExternalWarningLevel>
     </ClCompile>
     <Link>
@@ -102,12 +102,12 @@
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
-    <ClInclude Include="src\Cast.h" />
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
+    <ClInclude Include="src\codegen\CodegenUtils.h" />
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
-    <ClInclude Include="src\Generator.h" />
     <ClInclude Include="src\Lexer.h" />
+    <ClInclude Include="src\Module.h" />
     <ClInclude Include="src\Parser.h" />
     <ClInclude Include="src\PlatformUtils.h" />
     <ClInclude Include="src\Profiler.h" />
@@ -115,24 +115,30 @@
     <ClInclude Include="src\Tree.h" />
     <ClInclude Include="src\Type.h" />
     <ClInclude Include="src\Utils.h" />
+    <ClInclude Include="src\codegen\Cast.h" />
+    <ClInclude Include="src\codegen\Generator.h" />
     <ClInclude Include="src\pch.h" />
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="src\Cast.cpp" />
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp" />
     <ClCompile Include="src\CmdLine\Main.cpp" />
+    <ClCompile Include="src\codegen\ArrayExprGen.cpp" />
+    <ClCompile Include="src\codegen\StructExprGen.cpp" />
     <ClCompile Include="src\Emitter.cpp" />
     <ClCompile Include="src\Error.cpp" />
-    <ClCompile Include="src\Generator.cpp" />
     <ClCompile Include="src\Lexer.cpp" />
+    <ClCompile Include="src\Module.cpp" />
     <ClCompile Include="src\Parser.cpp" />
     <ClCompile Include="src\PlatformUtils.cpp" />
     <ClCompile Include="src\TreeTypeResolve.cpp" />
     <ClCompile Include="src\Type.cpp" />
+    <ClCompile Include="src\Utils.cpp" />
+    <ClCompile Include="src\codegen\BinaryExprGen.cpp" />
+    <ClCompile Include="src\codegen\Cast.cpp" />
+    <ClCompile Include="src\codegen\Generator.cpp" />
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
-    <ClCompile Include="src\Utils.cpp" />
   </ItemGroup>
   <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
   <ImportGroup Label="ExtensionTargets">

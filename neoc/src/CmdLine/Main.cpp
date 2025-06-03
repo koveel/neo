@@ -3,7 +3,7 @@
 
 #include "PlatformUtils.h"
 
-#include "Generator.h"
+#include "codegen/Generator.h"
 #include "Tree.h"
 
 #include "Emitter.h"
@@ -30,189 +30,6 @@ static std::string ReadFile(const char* filepath)
 	stream.close();
 
 	return fileContents;
-}
-
-static void DebugPrintNode(ASTNode* baseNode)
-{
-	static uint32_t indentation = 0;
-
-	for (uint32_t i = 0; i < indentation; i++)
-		printf("\t");
-
-// Sometimes one can find comfort in the preprocessor chaos
-#define DYN_CAST_TO(T) auto* node = dynamic_cast<T*>(baseNode)
-
-	switch (baseNode->nodeType)
-	{
-		case NodeType::Primary:
-		{
-			const char* formatStringsForType[] =
-			{
-				"%d",
-				"%d",
-				"%d",
-				"%d",
-				"%f",
-				"%f",
-				"%d",
-			};
-
-			DYN_CAST_TO(PrimaryExpression);
-
-			char line[100];
-			sprintf(line, "[Expr]: type = %s, value = %s\n", node->type->GetName().c_str(), formatStringsForType[(size_t)node->type->tag]);
-
-			printf(line, node->value.i64);
-
-			break;
-		}
-		case NodeType::String:
-		{
-			DYN_CAST_TO(StringExpression);
-			printf("[Expr]: type = string, value = \"%.*s\"\n", node->value.length, node->value.start);
-
-			break;
-		}
-		case NodeType::VariableDefinition:
-		{
-			DYN_CAST_TO(VariableDefinitionExpression);
-
-			if (node->type)
-				printf("[VariableDef %s]: \"%s\"\n", node->type->GetName().c_str(), node->name.c_str());
-			else
-				printf("[VariableDef]: \"%s\"\n", node->name.c_str());
-			if (node->initializer)
-			{
-				indentation++;
-				DebugPrintNode(node->initializer.get());
-				indentation--;
-			}
-			 
-			break;
-		}
-		case NodeType::Compound:
-		{
-			DYN_CAST_TO(CompoundStatement);
-
-			SetConsoleColor(15);
-			printf("[Scope]:----------------\n");
-			SetConsoleColor(7);
-
-			indentation++;
-			for (auto& node : node->children)
-				DebugPrintNode(node.get());
-
-			indentation--;
-			break;
-		}
-		case NodeType::VariableAccess:
-		{
-			DYN_CAST_TO(VariableAccessExpression);
-			printf("[VarAccess]: name = \"%s\"\n", node->name.c_str());
-
-			break;
-		}
-		case NodeType::Unary:
-		{
-			DYN_CAST_TO(UnaryExpression);
-			printf("[Unary %.*s]:\n", node->operatorToken.length, node->operatorToken.start);
-
-			indentation++;
-			DebugPrintNode(node->operand.get());
-			indentation--;
-
-			break;
-		}
-		case NodeType::Binary:
-		{
-			DYN_CAST_TO(BinaryExpression);
-			printf("[Binary %.*s]:\n", node->operatorToken.length, node->operatorToken.start);
-			indentation++; 
-			
-			DebugPrintNode(node->left.get());
-			DebugPrintNode(node->right.get());
-			
-			indentation--;
-
-			break;
-		}
-		case NodeType::Branch:
-		{
-			DYN_CAST_TO(BranchExpression);
-
-			printf("[Branch]: \n");
-			indentation++;
-			
-			for (auto& branch : node->branches)
-			{
-				if (branch.condition)
-					DebugPrintNode(branch.condition.get());
-
-				indentation++;
-				for (auto& expr : branch.body)
-					DebugPrintNode(expr.get());
-				indentation--;
-			}
-			indentation--;
-
-			break;
-		}
-		case NodeType::FunctionDefinition:
-		{
-			DYN_CAST_TO(FunctionDefinitionExpression);
-
-			printf("[Function '%s']: param_count = %d, return_type = %s\n", node->prototype.Name.c_str(), (int)node->prototype.Parameters.size(), node->prototype.ReturnType->GetName().c_str());
-			indentation++;
-			for (auto& param : node->prototype.Parameters)
-				DebugPrintNode(param.get());
-
-			for (auto& sub : node->body)
-				DebugPrintNode(sub.get());
-
-			indentation--;
-
-			break;
-		}
-		case NodeType::FunctionCall:
-		{
-			DYN_CAST_TO(FunctionCallExpression);
-
-			printf("[Call '%s']: arg_count = %d\n", node->name.c_str(), (int)node->arguments.size());
-			indentation++;
-			for (auto& arg : node->arguments)
-				DebugPrintNode(arg.get());
-			indentation--;
-
-			break;
-		}
-		case NodeType::StructDefinition:
-		{
-			DYN_CAST_TO(StructDefinitionExpression);
-
-			printf("[Struct '%s']:\n", node->name.c_str());
-			indentation++;
-
-			for (auto& member : node->members)
-				DebugPrintNode(member.get());
-
-			indentation--;
-			break;
-		}
-	}
-
-#undef DYN_CAST_TO
-}
-
-static void DebugPrintTree(const std::unique_ptr<CompoundStatement>& module)
-{
-	if (!module)
-		return;
-
-	printf("Module:\n\n");
-	for (auto& node : module->children)
-	{
-		DebugPrintNode(node.get());
-	}
 }
 
 //#define NEOC_DIST
@@ -267,8 +84,6 @@ int main(int argc, const char* argv[])
 
 	ParseResult parseResult = parser.Parse(&lexer);
 
-	//DebugPrintTree(parseResult.Module);
-
 	if (parseResult.Succeeded)
 	{
 		Generator generator;
@@ -287,8 +102,8 @@ int main(int argc, const char* argv[])
 	
 		//if (arguments.buildAndRun)
 		{
-			//std::string command = FormatString("neo %s", outputPath.c_str());
-			std::string command = FormatString("lli %s", outputPath.c_str());
+			//std::string command = FormatString("neo {}", outputPath.c_str());
+			std::string command = FormatString("lli {}", outputPath.c_str());
 			LaunchProcess(command.c_str());
 		}
 	}

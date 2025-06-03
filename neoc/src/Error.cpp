@@ -3,11 +3,11 @@
 #include "Lexer.h"
 #include "Parser.h"
 
-void Internal_LogError(const char* error)
+void Internal_LogError(const std::string& error)
 {
 	Parser* parser = Parser::GetParser();
 	SetConsoleColor(12);
-	fprintf(stderr, "error (line %d): %s\n", parser->lexer->line, error);
+	std::cout << "[line " << parser->lexer->line << "] error: " << error << "\n";
 	ResetConsoleColor();
 	Parser::Panic();
 }

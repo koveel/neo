@@ -39,7 +39,7 @@ CommandLineArguments CommandLineArguments::FromCommandLine(uint32_t argCount, co
 		uint32_t length = strlen(arg);
 		if (arg[0] != '-' || length < 2)
 		{
-			ERROR_AND_RET("unable to parse compiler args: expected a valid argument at arg index %d", argIndex - 1);
+			ERROR_AND_RET("unable to parse compiler args: expected a valid argument at arg index {}", argIndex - 1);
 		}
 		switch (*++index)
 		{
@@ -57,7 +57,7 @@ CommandLineArguments CommandLineArguments::FromCommandLine(uint32_t argCount, co
 						}
 						if (value > 3)
 						{
-							ERROR_AND_RET("invalid argument value: expected either 0, 1, 2, or 3 for '-O' (got %d)", value);
+							ERROR_AND_RET("invalid argument value: expected either 0, 1, 2, or 3 for '-O' (got {})", value);
 						}
 
 						argResults.optimizationLevel = value;
@@ -67,7 +67,7 @@ CommandLineArguments CommandLineArguments::FromCommandLine(uint32_t argCount, co
 					}
 					else
 					{
-						ERROR_AND_RET("unable to parse compiler args: expected '=' after '-O', got '%c'", *index);
+						ERROR_AND_RET("unable to parse compiler args: expected '=' after '-O', got '{}'", *index);
 					}
 				}
 				ERROR_AND_RET("unable to parse compiler args: expected '=' after '-O'");
@@ -81,11 +81,11 @@ CommandLineArguments CommandLineArguments::FromCommandLine(uint32_t argCount, co
 					break;
 				}
 
-				ERROR_AND_RET("unable to parse compiler args: expected a valid argument at arg index %d. got '%s'", argIndex - 1, arg);
+				ERROR_AND_RET("unable to parse compiler args: expected a valid argument at arg index {}. got '{}'", argIndex - 1, arg);
 			}
 			default:
 			{
-				error = FormatString("unable to parse compiler args: invalid argument '%s'", arg);
+				error = FormatString("unable to parse compiler args: invalid argument '{}'", arg);
 			}
 		}
 	}

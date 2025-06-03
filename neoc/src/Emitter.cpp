@@ -2,7 +2,6 @@
 
 #include "Emitter.h"
 
-
 void Emitter::Emit(const std::string& ir, const char* filepath)
 {
 	PROFILE_FUNCTION();

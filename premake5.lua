@@ -19,7 +19,7 @@ project "neoc"
 	location "neoc"
 	kind "ConsoleApp"
 	language "C++"
-	cppdialect "C++17"
+	cppdialect "C++20"
 	staticruntime "off"
 	
 	pchheader "pch.h"
@@ -67,7 +67,7 @@ project "neo"
 	location "neo"
 	kind "ConsoleApp"
 	language "C++"
-	cppdialect "C++17"
+	cppdialect "C++20"
 	staticruntime "off"
 	
 	targetdir ("bin/" .. outputdir .. "/%{prj.name}")

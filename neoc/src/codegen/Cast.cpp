@@ -1,36 +1,35 @@
 #include "pch.h"
 
-#include "Lexer.h"
 #include "Tree.h"
 #include "Cast.h"
 
-std::unordered_map<std::pair<TypeTag, TypeTag>, Cast> Cast::sPrimitiveCasts;
-std::unordered_map<std::pair<Type*, Type*>, Cast> Cast::sTypeCasts;
+std::unordered_map<std::pair<TypeTag, TypeTag>, Cast> Cast::s_PrimitiveCasts;
+std::unordered_map<std::pair<Type*, Type*>, Cast> Cast::s_TypeCasts;
 
 Cast* Cast::Add(TypeTag from, TypeTag to, Function fn, bool allowedImplicitly)
 {
-	return &(sPrimitiveCasts[{from, to}] = Cast(Type::Get(to), Type::Get(from), fn, allowedImplicitly));
+	return &(s_PrimitiveCasts[{from, to}] = Cast(Type::Get(to), Type::Get(from), fn, allowedImplicitly));
 }
 
 Cast* Cast::Add(Type* from, Type* to, Function fn, bool allowedImplicitly)
 {
-	return &(sTypeCasts[{from, to}] = Cast(to, from, fn, allowedImplicitly));
+	return &(s_TypeCasts[{from, to}] = Cast(to, from, fn, allowedImplicitly));
 }
 
 Cast* Cast::IsValid(TypeTag from, TypeTag to)
 {
-	if (!sPrimitiveCasts.count({ from, to }))
+	if (!s_PrimitiveCasts.count({ from, to }))
 		return nullptr;
 
-	return &sPrimitiveCasts[{from, to}];
+	return &s_PrimitiveCasts[{from, to}];
 }
 
 Cast* Cast::IsValid(Type* from, Type* to)
 {
-	if (!sTypeCasts.count({ from, to }))
+	if (!s_TypeCasts.count({ from, to }))
 		return nullptr;
 
-	return &sTypeCasts[{from, to}];
+	return &s_TypeCasts[{from, to}];
 }
 
 Cast* Cast::IsImplicit(TypeTag from, TypeTag to)

@@ -50,6 +50,6 @@ public:
 	Function function = nullptr;
 	bool implicit = false;
 private:
-	static std::unordered_map<std::pair<TypeTag, TypeTag>, Cast> sPrimitiveCasts;
-	static std::unordered_map<std::pair<Type*, Type*>, Cast> sTypeCasts;
+	static std::unordered_map<std::pair<TypeTag, TypeTag>, Cast> s_PrimitiveCasts;
+	static std::unordered_map<std::pair<Type*, Type*>, Cast> s_TypeCasts;
 };

@@ -57,23 +57,42 @@ public:
 	Type(Key spec, llvm::Type* raw = nullptr)
 		: tag(spec.first), contained(spec.second), raw(raw) {}
 
-	bool operator==(const Type* other) const { return tag == other->tag && contained == other->contained; }
-	bool operator!=(const Type* other) const { return !operator==(other); }
+	bool operator==(const Type* other) const { return this == other; }
+	bool operator!=(const Type* other) const { return this != other; }
 
 	virtual std::string GetName() { return TagToString(tag, this); }
 
 	StructType* IsStruct();
 	ArrayType* IsArray();
+
 	bool IsPointer() const { return tag == TypeTag::Pointer; }
 	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
 	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
 	bool IsString() const { return tag == TypeTag::String; }
+	
 	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
+	uint32_t GetBitWidth() const
+	{
+		switch (tag)
+		{
+		case TypeTag::Int8:
+		case TypeTag::UInt8:
+			return 8;
+		case TypeTag::Int16:
+		case TypeTag::UInt16:
+			return 16;
+		case TypeTag::Int32:
+		case TypeTag::UInt32:
+			return 32;
+		case TypeTag::Int64:
+		case TypeTag::UInt64:
+			return 64;
+		}
+		ASSERT(false);
+	}
 
-	// De-pointerfy
 	Type* GetContainedType() const;
-	// Pointerfy
 	Type* GetPointerTo();
 	ArrayType* GetArrayTypeOf(uint64_t count = 0);
 public:
@@ -87,25 +106,6 @@ public:
 	llvm::Type* raw = nullptr;
 public:
 	static std::unordered_map<Key, Type*> RegisteredTypes;
-};
-
-class PolyType : public Type
-{
-public:
-	using Type::Type;
-
-	PolyType(const std::string& name)
-		: name(name)
-	{}
-
-	virtual std::string GetName() { return name; }
-
-	static PolyType* Get(const std::string& name);
-public:
-	Type* underlying = nullptr;
-	std::string name;
-
-	static std::unordered_map<std::string, PolyType*> RegisteredTypes;
 };
 
 class StructType : public Type

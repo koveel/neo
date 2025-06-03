@@ -1,11 +1,14 @@
 #pragma once
 
+#include "Lexer.h"
+#include "Module.h"
+
 class Lexer;
 
 struct ParseResult
 {
-	bool Succeeded = false;
-	std::unique_ptr<struct CompoundStatement> Module;
+	bool Succeeded = true;
+	Module module;
 };
 
 class Parser

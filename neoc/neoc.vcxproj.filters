@@ -4,6 +4,9 @@
     <Filter Include="CmdLine">
       <UniqueIdentifier>{E1DCBC2E-4DBC-3BCA-56D4-C6A0C232A22B}</UniqueIdentifier>
     </Filter>
+    <Filter Include="codegen">
+      <UniqueIdentifier>{1A72BCD2-8651-3B6E-8F69-C644FBC7A1CF}</UniqueIdentifier>
+    </Filter>
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="src\CmdLine\CommandLineArguments.h">
@@ -11,17 +14,23 @@
     </ClInclude>
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
-    <ClInclude Include="src\Generator.h" />
     <ClInclude Include="src\Lexer.h" />
+    <ClInclude Include="src\Module.h" />
     <ClInclude Include="src\Parser.h" />
     <ClInclude Include="src\PlatformUtils.h" />
     <ClInclude Include="src\Profiler.h" />
+    <ClInclude Include="src\Scope.h" />
     <ClInclude Include="src\Tree.h" />
     <ClInclude Include="src\Type.h" />
     <ClInclude Include="src\Utils.h" />
+    <ClInclude Include="src\codegen\Cast.h">
+      <Filter>codegen</Filter>
+    </ClInclude>
+    <ClInclude Include="src\codegen\Generator.h">
+      <Filter>codegen</Filter>
+    </ClInclude>
     <ClInclude Include="src\pch.h" />
-    <ClInclude Include="src\Scope.h" />
-    <ClInclude Include="src\Cast.h" />
+    <ClInclude Include="src\codegen\CodegenUtils.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">
@@ -31,15 +40,25 @@
       <Filter>CmdLine</Filter>
     </ClCompile>
     <ClCompile Include="src\Emitter.cpp" />
-    <ClCompile Include="src\Generator.cpp" />
+    <ClCompile Include="src\Error.cpp" />
     <ClCompile Include="src\Lexer.cpp" />
+    <ClCompile Include="src\Module.cpp" />
     <ClCompile Include="src\Parser.cpp" />
     <ClCompile Include="src\PlatformUtils.cpp" />
-    <ClCompile Include="src\Type.cpp" />
-    <ClCompile Include="src\pch.cpp" />
     <ClCompile Include="src\TreeTypeResolve.cpp" />
-    <ClCompile Include="src\Cast.cpp" />
+    <ClCompile Include="src\Type.cpp" />
     <ClCompile Include="src\Utils.cpp" />
-    <ClCompile Include="src\Error.cpp" />
+    <ClCompile Include="src\codegen\BinaryExprGen.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
+    <ClCompile Include="src\codegen\Cast.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
+    <ClCompile Include="src\codegen\Generator.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
+    <ClCompile Include="src\pch.cpp" />
+    <ClCompile Include="src\codegen\StructExprGen.cpp" />
+    <ClCompile Include="src\codegen\ArrayExprGen.cpp" />
   </ItemGroup>
 </Project>

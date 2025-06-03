@@ -1,6 +1,6 @@
 #pragma once
 
-//#include "Lexer.h"
+#include "Lexer.h"
 #include "Type.h"
 
 class llvm::Value;
@@ -77,7 +77,7 @@ struct StringExpression : public Expression
 
 enum class UnaryType
 {
-	Not = 1,
+	Not = 1, BitwiseNot,
 	Negate,
 	PrefixIncrement, PrefixDecrement,
 	PostfixIncrement, PostfixDecrement,
@@ -105,19 +105,25 @@ struct UnaryExpression : public Expression
 
 enum class BinaryType
 {
-	Add = 1, CompoundAdd,
-	Subtract, CompoundSub,
-	Multiply, CompoundMul,
-	Divide, CompoundDiv,
+	None = 0,
+
+	Add, Subtract, Multiply, Divide,
+	Modulo,
+
 	Assign,
 	Equal, NotEqual,
-	Less,
-	LessEqual,
-	Greater,
-	GreaterEqual,
+	Less, LessEqual,
+	Greater, GreaterEqual,
+
 	Range, // ..
 	MemberAccess, ConciseMemberAccess,
 	Subscript,
+
+	Xor,
+	BitwiseOr,
+	BitwiseAnd,
+	LeftShift,
+	RightShift,
 
 	And, Or,
 };
@@ -126,6 +132,7 @@ struct BinaryExpression : public Expression
 {
 	Token operatorToken;
 	BinaryType binaryType = (BinaryType)0;
+	bool isCompoundAssignment = false;
 	std::unique_ptr<Expression> left = nullptr, right = nullptr;
 
 	BinaryExpression(uint32_t line)
@@ -216,11 +223,11 @@ struct LoopExpression : public Expression
 };
 
 // Block of statements?? tf is this shit
-struct CompoundStatement : public Expression
+struct CompoundExpression : public Expression
 {
 	std::vector<std::unique_ptr<Expression>> children;
 
-	CompoundStatement(uint32_t line)
+	CompoundExpression(uint32_t line)
 		: Expression(line)
 	{
 		nodeType = GetNodeType();

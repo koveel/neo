@@ -1,6 +1,5 @@
 #include "pch.h"
 
-#include "Lexer.h"
 #include "Tree.h"
 
 void UnaryExpression::ResolveType()
@@ -35,7 +34,7 @@ void BinaryExpression::ResolveType()
 	//	type = left->type->GetContainedType();
 }
 
-void CompoundStatement::ResolveType()
+void CompoundExpression::ResolveType()
 {
 	for (auto& expr : children)
 		expr->ResolveType();
@@ -88,6 +87,9 @@ void FunctionCallExpression::ResolveType()
 
 void ReturnStatement::ResolveType()
 {
+	if (!value)
+		return;
+
 	value->ResolveType();
 	type = value->type;
 }

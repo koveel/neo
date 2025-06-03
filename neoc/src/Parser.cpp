@@ -1,11 +1,7 @@
 #include "pch.h"
 
-#include "Lexer.h"
 #include "Tree.h"
-#include "Cast.h"
 #include "Parser.h"
-
-#include "PlatformUtils.h"
 
 static Parser* parser = nullptr;
 
@@ -14,6 +10,10 @@ Parser* Parser::GetParser() { return parser; }
 // Retard
 struct ParseError : public std::exception
 {
+	ParseError()
+	{
+		parser->result->Succeeded = false;
+	}
 };
 
 // Full retard
@@ -48,80 +48,155 @@ static void Expect(TokenType type, const char* errorMessageFmt, Args&&... args)
 	Advance();
 }
 
+struct BinaryOperation
+{
+	BinaryType type = (BinaryType)0;
+	bool compoundAssignment = false;
+};
+
 // Returns the binary type corresponding to the TokenType
 // For example, TokenType::Plus corresponds to BinaryType::Add
 static BinaryType GetBinaryType(TokenType type)
 {
 	switch (type)
 	{
-		case TokenType::PlusEqual:         return BinaryType::CompoundAdd;
-		case TokenType::Plus:              return BinaryType::Add;
-		case TokenType::DashEqual:         return BinaryType::CompoundSub;
-		case TokenType::Dash:              return BinaryType::Subtract;
-		case TokenType::StarEqual:         return BinaryType::CompoundMul;
-		case TokenType::Star:              return BinaryType::Multiply;
-		case TokenType::ForwardSlashEqual: return BinaryType::CompoundDiv;
-		case TokenType::ForwardSlash:      return BinaryType::Divide;
+	// Arithmetic
+	case TokenType::PlusEqual:
+	case TokenType::Plus:               return BinaryType::Add;
+	case TokenType::DashEqual:
+	case TokenType::Dash:               return BinaryType::Subtract;
+	case TokenType::StarEqual:
+	case TokenType::Star:               return BinaryType::Multiply;
+	case TokenType::ForwardSlashEqual:
+	case TokenType::ForwardSlash:       return BinaryType::Divide;
 
-		case TokenType::Equal:             return BinaryType::Assign;
-		case TokenType::DoubleEqual:       return BinaryType::Equal;
-		case TokenType::ExclamationEqual:  return BinaryType::NotEqual;
-		case TokenType::Less:              return BinaryType::Less;
-		case TokenType::LessEqual:         return BinaryType::LessEqual;
-		case TokenType::Greater:           return BinaryType::Greater;
-		case TokenType::GreaterEqual:      return BinaryType::GreaterEqual;
+	// Bitwise
+	case TokenType::XorEqual:
+	case TokenType::Xor:                return BinaryType::Xor;
+	case TokenType::PipeEqual:
+	case TokenType::Pipe:               return BinaryType::BitwiseOr;
+	case TokenType::AmpersandEqual:
+	case TokenType::Ampersand:          return BinaryType::BitwiseAnd;
+	case TokenType::PercentEqual:
+	case TokenType::Percent:            return BinaryType::Modulo;
+	case TokenType::DoubleLessEqual:
+	case TokenType::DoubleLess:         return BinaryType::LeftShift;
+	case TokenType::DoubleGreaterEqual:
+	case TokenType::DoubleGreater:      return BinaryType::RightShift;
 
-		case TokenType::DoubleAmpersand:   return BinaryType::And;
-		case TokenType::DoublePipe:        return BinaryType::Or;
+	// Boolean
+	case TokenType::Equal:              return BinaryType::Assign;
+	case TokenType::DoubleEqual:        return BinaryType::Equal;
+	case TokenType::ExclamationEqual:   return BinaryType::NotEqual;
+	case TokenType::Less:               return BinaryType::Less;
+	case TokenType::LessEqual:          return BinaryType::LessEqual;
+	case TokenType::Greater:            return BinaryType::Greater;
+	case TokenType::GreaterEqual:       return BinaryType::GreaterEqual;
+	case TokenType::DoubleAmpersand:    return BinaryType::And;
+	case TokenType::DoublePipe:         return BinaryType::Or;	
 
-		case TokenType::MiniEllipsis:      return BinaryType::Range;
-		case TokenType::Dot:               return BinaryType::MemberAccess;
-		case TokenType::LeftSquareBracket: return BinaryType::Subscript;
+	case TokenType::MiniEllipsis:       return BinaryType::Range;
+	case TokenType::Dot:                return BinaryType::MemberAccess;
+	case TokenType::LeftSquareBracket:  return BinaryType::Subscript;
 	}
 
 	return (BinaryType)0;
 }
 
-static int GetBinaryPriority(BinaryType type)
+static BinaryOperation GetBinaryOperationFromToken(TokenType token)
 {
-	// TODO: confirm precedence is correct which it probably isnt cause im dumb
-	switch (type)
+	BinaryOperation op;
+
+	// Compound assignment?
+	switch (token)
 	{
-		case BinaryType::MemberAccess:
-			return 31;
-		case BinaryType::ConciseMemberAccess:
-			return 30;
-		case BinaryType::Subscript:
-			return 29;
-		case BinaryType::CompoundMul:
-		case BinaryType::Multiply:
-		case BinaryType::CompoundDiv:
-		case BinaryType::Divide:
-			return 28;
-		case BinaryType::CompoundAdd:
-		case BinaryType::Add:
-		case BinaryType::CompoundSub:
-		case BinaryType::Subtract:
-			return 24;
-		case BinaryType::Less:
-		case BinaryType::LessEqual:
-		case BinaryType::Greater:
-		case BinaryType::GreaterEqual:
-			return 20;
-		case BinaryType::Equal:
-		case BinaryType::NotEqual:
-			return 19;
-		case BinaryType::And:
-		case BinaryType::Or:
-		case BinaryType::Assign:
-		case BinaryType::Range:
-			return 18;
+	case TokenType::PlusEqual:
+	case TokenType::DashEqual:
+	case TokenType::StarEqual:
+	case TokenType::ForwardSlashEqual:
+	case TokenType::XorEqual:
+	case TokenType::PipeEqual:
+	case TokenType::AmpersandEqual:
+	case TokenType::DoubleLessEqual:
+	case TokenType::DoubleGreaterEqual:
+	case TokenType::PercentEqual:
+		op.compoundAssignment = true;
+		break;
+	}
+
+	op.type = GetBinaryType(token);
+	return op;
+}
+
+static int GetUnaryPriority(UnaryType unary)
+{
+	switch (unary)
+	{
+		case UnaryType::PostfixIncrement:
+		case UnaryType::PostfixDecrement:
+			return 100;
+		case UnaryType::PrefixIncrement:
+		case UnaryType::PrefixDecrement:
+		case UnaryType::Negate:
+		case UnaryType::Not:
+		case UnaryType::BitwiseNot:
+		case UnaryType::AddressOf:
+		case UnaryType::Deref:
+			return 99;
 	}
 
 	return 0;
 }
 
-static uint32_t MadeExpressionsCount = 0;
+//static int GetBinaryPriority(BinaryType type)
+static int GetBinaryPriority(BinaryOperation operation)
+{
+	if (operation.compoundAssignment)
+		return 88;
+
+	switch (operation.type)
+	{
+		case BinaryType::Subscript:
+		case BinaryType::MemberAccess:
+		case BinaryType::ConciseMemberAccess:
+			return 100;
+		case BinaryType::Divide:
+		case BinaryType::Multiply:
+		case BinaryType::Modulo:
+			return 98;
+		case BinaryType::Add:
+		case BinaryType::Subtract:
+			return 97;
+		case BinaryType::LeftShift:
+		case BinaryType::RightShift:
+			return 96;
+		case BinaryType::Less:
+		case BinaryType::LessEqual:
+		case BinaryType::Greater:
+		case BinaryType::GreaterEqual:
+			return 95;
+		case BinaryType::Equal:
+		case BinaryType::NotEqual:
+			return 94;
+		case BinaryType::BitwiseAnd:
+			return 93;
+		case BinaryType::Xor:
+			return 92;
+		case BinaryType::BitwiseOr:
+			return 91;
+		case BinaryType::And:
+			return 90;
+		case BinaryType::Or:
+			return 89;
+		case BinaryType::Range:
+		case BinaryType::Assign:
+			return 88;
+	}
+
+	return 0;
+}
+
+static uint32_t MadeExpressionsCount = 0; // for debug
 
 template<typename T = Expression, typename = std::enable_if<std::is_base_of_v<Expression, T>>>
 static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
@@ -157,23 +232,24 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 	{
 		Token token = parser->current;
 
-		BinaryType type = GetBinaryType(token.type);
-		int newPriority = GetBinaryPriority(type);
+		BinaryOperation operation = GetBinaryOperationFromToken(token.type);
+		int newPriority = GetBinaryPriority(operation);
 
-		bool done = type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority; // tf
+		bool done = operation.type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority; // tf
 		if (newPriority == 0 || done)
 			return left;		
 		
 		Advance();  // Through operator
 
 		auto binary = MakeExpression<BinaryExpression>(left->type);
-		binary->binaryType = type;
+		binary->binaryType = operation.type;
 		binary->operatorToken = token;
+		binary->isCompoundAssignment = operation.compoundAssignment;
 		binary->left = std::move(left);
 
 		binary->right = ParseExpression(newPriority);
 
-		if (type == BinaryType::Subscript)
+		if (operation.type == BinaryType::Subscript)
 			Expect(TokenType::RightSquareBracket, "expected ']' after expression");
 
 		left = std::move(binary);
@@ -225,22 +301,22 @@ static Type* ParseType()
 			Advance();
 			
 			prev = *token;
-			Expect(TokenType::Number, "expected number for array capacity (after '[')");
-			uint64_t capacity = (uint64_t)strtoul(prev.start, nullptr, 0);
-			Expect(TokenType::RightSquareBracket, "expected ']' after capacity");
+			if (token->type == TokenType::Number)
+			{
+				Advance();
+				uint64_t capacity = (uint64_t)strtoul(prev.start, nullptr, 0);
+				Expect(TokenType::RightSquareBracket, "expected ']' after capacity");
 
-			return ArrayType::Get(ParseType(), capacity);
+				return ArrayType::Get(ParseType(), capacity);
+			}
+
+			Expect(TokenType::RightSquareBracket, "expected ']' after '['");
+			return ArrayType::Get(ParseType(), 0);
 		}
 	}
 
 	std::string typeName = { token->start, token->length };
 	Advance();
-
-	if (token->type == TokenType::QuestionMark)
-	{
-		Advance();
-		return PolyType::Get(typeName);
-	}
 
 	return Type::Get(typeName);
 }
@@ -262,14 +338,14 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	}
 
 	// For convenience
-	auto makeUnary = [token](UnaryType type, int priority = -1)
+	auto makeUnary = [token](UnaryType type)
 	{
 		auto unary = MakeExpression<UnaryExpression>();
 		unary->operatorToken = *token;
 		unary->unaryType = type;
 
 		Advance(); // To operand
-		unary->operand = ParseExpression(priority);
+		unary->operand = ParseExpression(GetUnaryPriority(type));
 		unary->type = unary->operand->type;
 
 		return unary;
@@ -280,6 +356,11 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	case TokenType::Exclamation:
 	{
 		auto unary = makeUnary(UnaryType::Not);
+		return unary;
+	}
+	case TokenType::Tilde:
+	{
+		auto unary = makeUnary(UnaryType::BitwiseNot);
 		return unary;
 	}
 	case TokenType::Dash:
@@ -304,7 +385,7 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 	}
 	case TokenType::Star:
 	{
-		auto unary = makeUnary(UnaryType::Deref, 28);
+		auto unary = makeUnary(UnaryType::Deref);
 		return unary;
 	}
 	case TokenType::Dot:
@@ -452,7 +533,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			return primary;
 		}
 		case TokenType::LeftCurlyBracket:
-			return ParseCompoundStatement();
+			return ParseCompoundStatement(); // TODO: be able to recognize 'typed' compound []f32 = { ... }
 		case TokenType::LeftSquareBracket:
 			return ParseArrayExpression();
 		case TokenType::Const: // TODO: const after id
@@ -467,7 +548,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 	}
 
 	Advance();
-	LogError("unexpected symbol '%.*s'", token.length, token.start);
+	LogError("unexpected symbol '{}'", std::string_view(token.start, token.length));
 
 	return nullptr;
 }
@@ -479,9 +560,13 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	Advance(); // Through return
 
 	auto node = MakeExpression<ReturnStatement>();
+	node->type = Type::Get(TypeTag::Void);
 
-	node->value = ParseExpression(-1);
-	node->type = node->value->type;
+	if (current->type != TokenType::Semicolon)
+	{
+		node->value = ParseExpression(-1);
+		node->type = node->value->type;
+	}
 
 	return node;
 }
@@ -492,7 +577,7 @@ static std::unique_ptr<Expression> ParseArrayExpression()
 	PROFILE_FUNCTION();
 
 	Token* token = &parser->current;
-	auto compound = MakeExpression<CompoundStatement>();
+	auto compound = MakeExpression<CompoundExpression>();
 
 	Advance(); // through [
 
@@ -600,7 +685,10 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		{
 			variable->succeedingDefinitionNames.emplace_back(token->start, token->length);
 			Advance();
-		} while (token->type == TokenType::Comma && token->type != TokenType::Colon && token->type != TokenType::WalrusTeeth && token->type != TokenType::Eof);
+
+			if (token->type == TokenType::Comma)
+				Advance();
+		} while (token->type != TokenType::Colon && token->type != TokenType::WalrusTeeth && token->type != TokenType::Eof);
 	}
 
 	if (token->type == TokenType::WalrusTeeth) // Automatic type deduction
@@ -654,10 +742,10 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		auto parameter = ParseVariableDefinitionStatement();
 
 		// Cast to VariableDefinitionStatement
-		auto tmp = dynamic_cast<VariableDefinitionExpression*>(parameter.get());
+		auto temp = static_cast<VariableDefinitionExpression*>(parameter.get());
 		std::unique_ptr<VariableDefinitionExpression> variable;
 		parameter.release();
-		variable.reset(tmp);
+		variable.reset(temp);
 
 		// multi line type sh
 		for (const auto& name : variable->succeedingDefinitionNames)
@@ -694,7 +782,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 
 		if (!isPrototype)
 		{
-			LogError("expected '{' to start function body for '%s'", functionName.c_str());
+			LogError("expected '{' to start function body for '{}'", functionName.c_str());
 			return nullptr;
 		}
 		Advance();
@@ -739,7 +827,7 @@ static std::unique_ptr<Expression> ParseFunctionCall()
 		call->arguments.push_back(std::move(arg));
 
 		if (current->type != TokenType::RightParen)
-			Expect(TokenType::Comma, "expected ',' to separate arguments for call to '%s'", functionName.c_str());
+			Expect(TokenType::Comma, "expected ',' to separate arguments for call to '{}'", functionName.c_str());
 	}
 
 	Expect(TokenType::RightParen, "expected ')' to close argument list");
@@ -962,7 +1050,7 @@ static BranchExpression::Branch ParseBranch(uint32_t branchType)
 			branch.body.push_back(std::move(expr));
 		}
 
-		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for %s", branchKeyword);
+		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for {}", branchKeyword);
 	}
 	
 	return branch;
@@ -1009,7 +1097,7 @@ static std::unique_ptr<Expression> ParseCompoundStatement()
 	Expect(TokenType::LeftCurlyBracket, "expect '{' to begin compound statement");
 		
 	Token* token = &parser->current;
-	auto compound = MakeExpression<CompoundStatement>();
+	auto compound = MakeExpression<CompoundExpression>();
 
 	// Parse the statements in the block
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
@@ -1030,7 +1118,7 @@ static std::unique_ptr<Expression> ParseCompoundStatement()
 	return compound;
 }
 
-static void ParseModule(CompoundStatement* compound)
+static void ParseModule(CompoundExpression* compound)
 {
 	PROFILE_FUNCTION();
 
@@ -1087,21 +1175,19 @@ ParseResult Parser::Parse(Lexer* lexer)
 	parser->lexer = lexer;
 	parser->result = &result;
 		
-	result.Module = MakeExpression<CompoundStatement>();
+	result.module.SyntaxTree = MakeExpression<CompoundExpression>();
 
 	try
 	{
 		Advance();
-		ParseModule(result.Module.get());
-
-		result.Succeeded = true;
+		ParseModule(result.module.SyntaxTree.get());
 	}
 	catch (FatalError&)
 	{
-		fprintf(stderr, "fatal parse error - compilation stopped\n");
+		std::cout << "fatal parse error - compilation stopped\n";
 	}
 
-	printf("generated %d expressions\n", MadeExpressionsCount);
+	std::cout << "generated " << MadeExpressionsCount << " expressions\n";
 
 	return result;
 }
@@ -1116,11 +1202,9 @@ void Parser::Panic()
 	}
 	else
 	{
-		ParseResult* result = parser->result;
-
 		// The world just exploded
-		result->Succeeded = false;
-		result->Module = nullptr;
+		ParseResult* result = parser->result;
+		result->module.SyntaxTree = nullptr;
 
 		throw FatalError(); // Fuck this shit
 	}

@@ -2,7 +2,6 @@
 
 struct Value
 {
-	//llvm::Type* type;
 	Type* type;
 	llvm::Value* raw;
 };

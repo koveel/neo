@@ -2,12 +2,12 @@
 
 #define ASSERT(x) if (!(x)) { __debugbreak(); }
 
-void Internal_LogError(const char* error);
+void Internal_LogError(const std::string& error);
 
 template<typename... Args>
-extern void LogError(const char* format, Args&&... args)
+static void LogError(const char* format, Args&&... args)
 {
-	Internal_LogError(FormatString(format, std::forward<Args>(args)...).c_str());
+	Internal_LogError(FormatString(format, std::forward<Args>(args)...));
 }
 
 // Error during code gen
