@@ -1,5 +1,20 @@
 #pragma once
 
+static bool IsWhitespace(char c)
+{
+	return c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v' || c == '\f';
+}
+static bool IsAlpha(char c)
+{
+	return (c >= 'a' && c <= 'z') ||
+		(c >= 'A' && c <= 'Z') ||
+		c == '_';
+}
+static bool IsDigit(char c)
+{
+	return c >= '0' && c <= '9';
+}
+
 enum class TokenType : char
 {
 	Error, Eof,
@@ -53,10 +68,22 @@ struct Token
 	uint32_t line = 0, length = 1;
 };
 
+struct File
+{
+	File() = default;
+	File(const std::string& name, const std::string& source)
+		: name(name), source(source) {}
+
+	std::string name;
+	std::string source;
+
+	constexpr size_t length() const { return source.length(); }
+};
+
 class Lexer
 {
 public:
-	Lexer(const char* source);
+	Lexer(const File& file);
 	
 	Token Next();
 
@@ -65,7 +92,9 @@ public:
 	// Used for peeking
 	Token previousToken, currentToken, nextToken;
 
+	File file;
 	uint32_t line = 1, column = 0;
+
 	const char* current; // Current character
-	const char* start; // First character of token being lexed
+	const char* tokenStart; // First character of token being lexed
 };

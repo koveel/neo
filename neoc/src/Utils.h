@@ -1,7 +1,7 @@
 #pragma once
 
 template<typename... Args>
-static std::string FormatString(std::string_view format, Args&&... args)
+static std::string FormatString(const std::string& format, Args&&... args)
 {
 	return std::vformat(format, std::make_format_args(args...));
 }

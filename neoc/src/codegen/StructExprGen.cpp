@@ -35,7 +35,7 @@ static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Struct
 	uint32_t i = 0;
 	for (auto& member : definition->members)
 	{
-		if (targetMember == member->name)
+		if (targetMember == member->definition.name)
 			return i;
 
 		i++;
@@ -116,7 +116,7 @@ llvm::Value* StructDefinitionExpression::Generate()
 			continue;
 
 		throw CompileError(vardef->sourceLine, "unresolved type '{}' for member '{}' in struct '{}'",
-			memberType->GetName().c_str(), vardef->name.c_str(), name.c_str());
+			memberType->GetName().c_str(), vardef->definition.name.c_str(), name.c_str());
 	}
 
 	return nullptr;

@@ -368,12 +368,11 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				aggregateInitializer = compound;
 				aggregateInitialization = true;
 
-				if (compound->type && compound->type->IsArray()) // [...]
+				if (compound->type->IsArray()) // [...]
 				{
-					//llvm::Value* initializer = CreateArrayAlloca(compound->type->raw, compound->children);
-					//s_CurrentScope->AddValue(name, { type = compound->type, initializer });
-					//return initializer;
-					return nullptr;
+					llvm::Value* initializer = Generator::CreateArrayAlloca(compound->type->raw, compound->children);
+					s_CurrentScope->AddValue(definition.name, { type = compound->type, initializer });
+					return initializer;
 				}
 
 				break;
@@ -394,7 +393,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 
 	// Alloc
 	llvm::Value* alloc = s_Builder->CreateAlloca(type->raw);
-	s_CurrentScope->AddValue(name, { type, alloc });
+	s_CurrentScope->AddValue(definition.name, { type, alloc });
 
 	// Initialize members if struct
 	if (StructType* structType = type->IsStruct())
@@ -532,7 +531,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	for (uint32_t i = 0; i < members.size(); i++)
 	{
 		auto& member = members[i];
-		if (member->name == targetMemberName)
+		if (member->definition.name == targetMemberName)
 		{
 			binary->type = member->type;
 			memberIndex = i;
@@ -815,7 +814,8 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 	for (auto& arg : s_CurrentFunction.llvmFunction->args())
 	{
 		auto& parameter = prototype.Parameters[i++];
-		arg.setName(parameter->name);
+		auto& def = parameter->definition;
+		arg.setName(def.name);
 
 		if (!hasBody)
 			continue;
@@ -823,7 +823,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		// Alloc arg
 		llvm::Value* alloc = s_Builder->CreateAlloca(arg.getType());
 		s_Builder->CreateStore(&arg, alloc);
-		s_CurrentScope->AddValue(parameter->name, { parameter->type, alloc });
+		s_CurrentScope->AddValue(def.name, { parameter->type, alloc });
 	}
 
 	// Gen body

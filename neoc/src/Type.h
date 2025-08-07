@@ -148,6 +148,10 @@ public:
 	virtual std::string GetName() { return "[" + std::to_string(count) + "]" + contained->GetName(); }
 
 	static ArrayType* Get(Type* elementType, uint64_t count);
+	
+	// Used within a variable definition to keep track of the fact that it's an array, without needing the actual element type or count
+	// used when inferring type / count
+	static ArrayType* Dummy(uint64_t capacity = 0);
 public:
 	uint64_t count = 0;
 	//bool dynamic = false;

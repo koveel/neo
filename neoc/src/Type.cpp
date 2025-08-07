@@ -6,6 +6,8 @@ std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
 std::unordered_map<std::string, StructType*> StructType::RegisteredTypes;
 std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
  
+// TODO; WTF DONT HEAP ALLOCATE EVERY TYPE
+
 static const std::pair<TypeTag, const char*> TagToStringMap[] =
 {
 	{ TypeTag::Void,    "void",   },
@@ -109,4 +111,9 @@ ArrayType* ArrayType::Get(Type* elementType, uint64_t count)
 		return RegisteredTypes[key];
 
 	return RegisteredTypes[key] = new ArrayType(elementType, count);
+}
+
+ArrayType* ArrayType::Dummy(uint64_t capacity)
+{
+	return new ArrayType(nullptr, capacity);
 }

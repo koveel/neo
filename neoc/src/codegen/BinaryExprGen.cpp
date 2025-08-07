@@ -59,6 +59,7 @@ static llvm::Instruction::BinaryOps LLVMBinaryOpFromBinaryExpr(BinaryType operat
 	case BinaryType::RightShift: return Instruction::BinaryOps::LShr;
 	case BinaryType::Xor:        return Instruction::BinaryOps::Xor;
 	case BinaryType::BitwiseAnd: return Instruction::BinaryOps::And;
+	case BinaryType::Or: 
 	case BinaryType::BitwiseOr:  return Instruction::BinaryOps::Or;
 	}
 

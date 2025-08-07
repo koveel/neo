@@ -210,19 +210,19 @@ static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 }
 
 static std::unique_ptr<Expression> ParseLoop();
+static std::unique_ptr<Expression> ParseArray();
 static std::unique_ptr<Expression> ParseCastExpression();
 static std::unique_ptr<Expression> ParseLoopControlFlow();
 static std::unique_ptr<Expression> ParseUnaryExpression();
 static std::unique_ptr<Expression> ParseReturnStatement();
-static std::unique_ptr<Expression> ParseArrayExpression();
-static std::unique_ptr<Expression> ParseArrayInitializer();
-static std::unique_ptr<Expression> ParseCompoundStatement();
+static std::unique_ptr<Expression> ParseCompoundStatement(TokenType statementDelimiter = TokenType::Semicolon);
+static std::unique_ptr<Expression> ParseCompoundExpressionAsArray(Type* elementType = nullptr, uint64_t elementCount = 0);
 static std::unique_ptr<Expression> ParsePrimaryExpression();
 static std::unique_ptr<Expression> ParseIdentifierExpression();
 static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType = TokenType::If);
 static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 
- static std::unique_ptr<Expression> ParseExpression(int priority) 
+static std::unique_ptr<Expression> ParseExpression(int priority) 
 {
 	PROFILE_FUNCTION();
 
@@ -256,9 +256,18 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement();
 	}
 }
 
-static std::unique_ptr<Expression> ParseLine()
+static char CharFromTokenType(TokenType type)
 {
-	bool expectSemicolon = true;
+	switch (type)
+	{
+	case TokenType::Comma: return ',';
+	case TokenType::Semicolon: return ';';
+	}
+}
+
+static std::unique_ptr<Expression> ParseLine(TokenType expectedEndline = TokenType::Semicolon)
+{
+	bool expectEndingToken = true;
 	auto expr = ParseExpression(-1);
 
 	switch (expr->nodeType)
@@ -268,12 +277,13 @@ static std::unique_ptr<Expression> ParseLine()
 	case NodeType::Compound:
 	case NodeType::StructDefinition:
 	case NodeType::FunctionDefinition:
-		expectSemicolon = false;
+		expectEndingToken = false;
 		break;
 	}
 
-	if (expectSemicolon)
-		Expect(TokenType::Semicolon, "expected ';' after expression");
+	std::string msg = FormatString("expected '{}' after expression", CharFromTokenType(expectedEndline));
+	if (expectEndingToken)
+		Expect(expectedEndline, msg.c_str());
 
 	return expr;
 }
@@ -299,19 +309,20 @@ static Type* ParseType()
 		if (token->type == TokenType::LeftSquareBracket)
 		{
 			Advance();
-			
+			uint64_t capacity = 0;
+
 			prev = *token;
 			if (token->type == TokenType::Number)
 			{
 				Advance();
-				uint64_t capacity = (uint64_t)strtoul(prev.start, nullptr, 0);
-				Expect(TokenType::RightSquareBracket, "expected ']' after capacity");
-
-				return ArrayType::Get(ParseType(), capacity);
+				capacity = (uint64_t)strtoul(prev.start, nullptr, 0);
 			}
 
 			Expect(TokenType::RightSquareBracket, "expected ']' after '['");
-			return ArrayType::Get(ParseType(), 0);
+			if (token->type == TokenType::Equal)
+				return ArrayType::Dummy(capacity);
+
+			return ArrayType::Get(ParseType(), capacity);
 		}
 	}
 
@@ -534,9 +545,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		}
 		case TokenType::LeftCurlyBracket:
 			return ParseCompoundStatement(); // TODO: be able to recognize 'typed' compound []f32 = { ... }
-		case TokenType::LeftSquareBracket:
-			return ParseArrayExpression();
-		case TokenType::Const: // TODO: const after id
+		//case TokenType::Const: // TODO: const after id
 		case TokenType::ID:
 		{
 			return ParseIdentifierExpression();
@@ -544,6 +553,10 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 		case TokenType::Cast:
 		{
 			return ParseCastExpression();
+		}
+		case TokenType::LeftSquareBracket:
+		{
+			return ParseArray();
 		}
 	}
 
@@ -571,40 +584,79 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	return node;
 }
 
-// [...]
-static std::unique_ptr<Expression> ParseArrayExpression()
+static std::unique_ptr<Expression> ParseCompoundExpressionAsArray(Type* elementType, uint64_t elementCount)
 {
 	PROFILE_FUNCTION();
 
 	Token* token = &parser->current;
+
 	auto compound = MakeExpression<CompoundExpression>();
+	Expect(TokenType::LeftCurlyBracket, "expected '{' to begin array");
 
-	Advance(); // through [
-
-	// Parse the statements in the block
-	while (token->type != TokenType::RightSquareBracket && token->type != TokenType::Eof)
+	// Parse the expressions in the block
+	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
 	{
 		compound->children.push_back(ParseExpression(-1));
 
-		if (token->type != TokenType::RightSquareBracket) {
+		if (token->type != TokenType::RightCurlyBracket) {
 			Expect(TokenType::Comma, "expected ',' to separate values in array");
 		}
 		else {
-			if (token->type == TokenType::Colon)
+			if (token->type == TokenType::Comma) // Allow trailing comma
 				Advance();
 		}
 	}
 
-	Expect(TokenType::RightSquareBracket, "expected ']' to end initializer");
-
+	Expect(TokenType::RightCurlyBracket, "expected '}' to end array");
+	
 	// Type
-	const auto& values = compound->children;
-	Type* elementType = values[0]->type;
-	uint64_t count = values.size();
+	if (!elementType) {
+		const auto& values = compound->children;
+		if (values.size() == 0)
+			LogError("cannot infer array type without any elements");
 
-	compound->type = ArrayType::Get(elementType, count);
+		elementType = values[0]->type;
+	}
+	size_t numExpressions = compound->children.size();
+	if (!elementCount) {
+		elementCount = numExpressions;
+	}
+	else {
+		if (elementCount != numExpressions)
+			LogError("expected {} elements for array initializer - got {}", elementCount, numExpressions);
+	}
+
+	compound->type = ArrayType::Get(elementType, elementCount);
 
 	return compound;
+}
+
+static std::unique_ptr<Expression> ParseArray()
+{
+	PROFILE_FUNCTION();
+
+	Token* token = &parser->current;
+
+	Advance(); // through [
+	uint64_t elementCount = 0;
+
+	if (token->type != TokenType::RightSquareBracket)
+	{
+		// Array count
+		Advance();
+	}
+	Expect(TokenType::RightSquareBracket, "expected ']'");
+	
+	Type* elementType = nullptr;
+	bool probablyGivingUsTheType = token->type != TokenType::LeftCurlyBracket && token->type != TokenType::Equal;
+	if (probablyGivingUsTheType)
+	{
+		// Element type
+		elementType = ParseType();
+	}
+
+	// Parse the expressions in the block
+	return ParseCompoundExpressionAsArray(elementType, elementCount);
 }
 
 // expects array type   []x
@@ -616,7 +668,7 @@ static std::unique_ptr<Expression> ParseArrayDefinition(VariableDefinitionExpres
 	Advance();
 
 	auto array = MakeExpression<ArrayDefinitionExpression>();
-	array->definition = definition;
+	array->variableDef = definition;
 
 	bool dynamic = false;
 	if (token->type == TokenType::MiniEllipsis)
@@ -671,7 +723,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	std::string variableName = std::string(nameToken.start, nameToken.length);
 
 	auto variable = MakeExpression<VariableDefinitionExpression>();
-	variable->name = std::string(nameToken.start, nameToken.length);
+	variable->definition.name = std::string(nameToken.start, nameToken.length);
 
 	Token* token = &parser->current;
 	if (token->type == TokenType::Comma)
@@ -707,18 +759,18 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		Advance(); // through :
 
 		variable->type = ParseType();
-		if (!variable->type->IsPointer() && token->type == TokenType::LeftSquareBracket)
-		{
-			variable->initializer = ParseArrayDefinition(variable.get());
-			//variable->type = variable->initializer->type;
-			return variable;
-		}
 	}
 
 	// Handle initializer if there is one
 	if (parser->current.type == TokenType::Equal)
 	{
 		Advance(); // Through =
+		if (ArrayType* arrayType = variable->type->IsArray()) {
+			variable->initializer = ParseCompoundExpressionAsArray(arrayType->contained, arrayType->count);
+			variable->type = variable->initializer->type;
+			return variable;
+		}
+
 		variable->initializer = ParseExpression(-1);
 	}
 
@@ -752,7 +804,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		{
 			auto param = MakeExpression<VariableDefinitionExpression>();
 			param->type = variable->type;
-			param->name = name;
+			param->definition.name = name;
 			//param->initializer = variable->initializer;
 
 			prototype.Parameters.push_back(std::move(param));
@@ -869,7 +921,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 			auto var = MakeExpression<VariableDefinitionExpression>();
 			var->type = variable->type;
 			var->initializer = variable->initializer;
-			var->name = name;
+			var->definition.name = name;
 
 			type->members.push_back(var->type);
 			structure->members.push_back(std::move(var));
@@ -1090,7 +1142,7 @@ static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType)
 	return branch;
 }
 
-static std::unique_ptr<Expression> ParseCompoundStatement()
+static std::unique_ptr<Expression> ParseCompoundStatement(TokenType statementDelimiter)
 {
 	PROFILE_FUNCTION();
 
@@ -1105,7 +1157,7 @@ static std::unique_ptr<Expression> ParseCompoundStatement()
 		// Is this shit even necessary
 		try
 		{
-			compound->children.push_back(ParseLine());
+			compound->children.push_back(ParseLine(statementDelimiter));
 		}
 		catch (ParseError&)
 		{
@@ -1154,8 +1206,7 @@ static bool AttemptSynchronization()
 	if (current->type == TokenType::Eof)
 		return false;
 
-	if (current->type == TokenType::Semicolon)
-		Advance(); // Through ;
+	Advance(); // Through ; or }
 
 	return true;
 }

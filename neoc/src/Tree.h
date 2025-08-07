@@ -239,9 +239,19 @@ struct CompoundExpression : public Expression
 	void ResolveType() override;
 };
 
+enum class DefinitionFlags : uint32_t
+{
+	Internal = 1 << 0,
+};
+
 struct VariableDefinitionExpression : public Expression
 {
-	std::string name;
+	struct Definition
+	{
+		std::string name;
+		DefinitionFlags flags = (DefinitionFlags)0;
+	} definition;
+
 	std::shared_ptr<Expression> initializer = nullptr;
 	std::vector<std::string> succeedingDefinitionNames;
 
@@ -260,7 +270,7 @@ struct VariableDefinitionExpression : public Expression
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
 struct ArrayDefinitionExpression : public Expression
 {
-	VariableDefinitionExpression* definition = nullptr;
+	VariableDefinitionExpression* variableDef = nullptr;
 
 	uint64_t capacity = 0; // todo: make expr
 	std::unique_ptr<Expression> initializer;

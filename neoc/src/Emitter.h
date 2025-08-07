@@ -1,8 +1,8 @@
 #pragma once
 
+#include <filesystem>
+
 struct Emitter
 {
-	void Open();
-	void Emit(const std::string& ir);
-	void Emit(const std::string& ir, const char* filepath);
+	void Emit(const std::string& ir, const std::filesystem::path& filepath);
 };

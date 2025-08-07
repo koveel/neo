@@ -1,5 +1,6 @@
 #include "pch.h"
 #include <iostream>
+#include <filesystem>
 
 #include "PlatformUtils.h"
 
@@ -8,7 +9,7 @@
 
 #include "Emitter.h"
 
-static std::string ReadFile(const char* filepath)
+static File ReadFile(const std::filesystem::path& filepath)
 {
 	std::string fileContents;
 
@@ -18,7 +19,7 @@ static std::string ReadFile(const char* filepath)
 	if (!stream.good())
 	{
 		fprintf(stderr, "failed to open file \"%s\".\n", filepath);
-		return fileContents;
+		return {};
 	}
 
 	stream.seekg(0, std::ios::end);
@@ -29,7 +30,7 @@ static std::string ReadFile(const char* filepath)
 
 	stream.close();
 
-	return fileContents;
+	return { filepath.filename().string(), fileContents };
 }
 
 //#define NEOC_DIST
@@ -67,9 +68,10 @@ int main(int argc, const char* argv[])
 		return 1;
 	}
 
-	std::string mainPath = arguments.path;
+	//std::string mainPath = arguments.path;
+	std::filesystem::path mainPath = arguments.path;
 #endif
-	if (mainPath.substr(mainPath.length() - strlen("neo")) != "neo")
+	if (mainPath.extension() != ".neo")
 	{
 		fprintf(stderr, "expected a .neo file\n");
 		return 1;
@@ -77,9 +79,9 @@ int main(int argc, const char* argv[])
 
 	auto startTime = std::chrono::system_clock::now();
 
-	std::string contents = ReadFile(mainPath.c_str());
-	
-	Lexer lexer = Lexer(contents.c_str());
+	File file = ReadFile(mainPath.c_str());
+
+	Lexer lexer = Lexer(file);
 	Parser parser;
 
 	ParseResult parseResult = parser.Parse(&lexer);
@@ -95,15 +97,15 @@ int main(int argc, const char* argv[])
 		if (!result.Succeeded)
 			return 0;
 	
-		std::string outputPath = mainPath.substr(0, mainPath.size() - 3) + "ll";
+		std::filesystem::path outputPath = mainPath.replace_extension(".ll");
 	
 		Emitter emitter;
-		emitter.Emit(result.ir, outputPath.c_str());
+		emitter.Emit(result.ir, outputPath);
 	
 		//if (arguments.buildAndRun)
 		{
 			//std::string command = FormatString("neo {}", outputPath.c_str());
-			std::string command = FormatString("lli {}", outputPath.c_str());
+			std::string command = FormatString("lli {}", outputPath.string().c_str());
 			LaunchProcess(command.c_str());
 		}
 	}

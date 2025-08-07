@@ -58,10 +58,11 @@ void LaunchProcess(const char* args)
 
 void SetConsoleColor(int c)
 {
+	//GetConsoleAttribute();
 	SetConsoleTextAttribute(hConsole, c);
 }
 
 void ResetConsoleColor()
 {
-	SetConsoleTextAttribute(hConsole, 15);
+	SetConsoleTextAttribute(hConsole, 7);
 }

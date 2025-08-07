@@ -55,7 +55,7 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 		value = Generator::EmitAlloca(arrayTy);
 	}
 
-	Generator::ScopeValue(definition->name, { type, value });
+	Generator::ScopeValue(variableDef->definition.name, { type, value });
 	return value;
 }
 

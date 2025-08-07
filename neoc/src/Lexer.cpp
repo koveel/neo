@@ -9,11 +9,6 @@ static bool IsAtEnd()
 	return *lexer->current == '\0';
 }
 
-static bool IsWhitespace(char c)
-{
-	return c == ' ' || c == '\n' || c == '\t' || c == '\r' || c == '\v' || c == '\f';
-}
-
 static void Advance(int length)
 {
 	lexer->current += length;
@@ -25,16 +20,6 @@ static char Peek()
 	return *lexer->current;
 }
 
-static bool IsAlpha(char c)
-{
-	return (c >= 'a' && c <= 'z') ||
-		   (c >= 'A' && c <= 'Z') ||
-			c == '_';
-}
-static bool IsDigit(char c)
-{
-	return c >= '0' && c <= '9';
-}
 
 static bool IsAtComment()
 {
@@ -82,8 +67,8 @@ static Token MakeIdentifier()
 
 	token.type = TokenType::ID;
 	token.line = lexer->line;
-	token.start = lexer->start;
-	token.length = (int)(lexer->current - lexer->start);
+	token.start = lexer->tokenStart;
+	token.length = (int)(lexer->current - lexer->tokenStart);
 
 	return token;
 }
@@ -128,8 +113,8 @@ static Token MakeNumber()
 
 	token.type = TokenType::Number;
 	token.line = lexer->line;
-	token.start = lexer->start;
-	token.length = (int)(lexer->current - lexer->start);
+	token.start = lexer->tokenStart;
+	token.length = (int)(lexer->current - lexer->tokenStart);
 
 	return token;
 }
@@ -140,7 +125,7 @@ static Token StringToken()
 
 	Advance(1);
 
-	lexer->start = lexer->current; // Manually do this to exclude quotations
+	lexer->tokenStart = lexer->current; // Manually do this to exclude quotations
 	// Advance through chars
 	do
 	{
@@ -159,8 +144,8 @@ static Token StringToken()
 
 	token.type = TokenType::String;
 	token.line = lexer->line;
-	token.start = lexer->start;
-	token.length = (int)(lexer->current - lexer->start);
+	token.start = lexer->tokenStart;
+	token.length = (int)(lexer->current - lexer->tokenStart);
 
 	// Advance through closing quote
 	Advance(1);
@@ -174,7 +159,7 @@ static Token MakeToken(TokenType type, int length)
 	
 	token.type = type;
 	token.line = lexer->line;
-	token.start = lexer->start;
+	token.start = lexer->tokenStart;
 	token.length = length;
 	
 	Advance(length);
@@ -197,7 +182,7 @@ static void ProcessToken(Token* token)
 {
 	PROFILE_FUNCTION();
 
-	SkipWhitespace();
+	//SkipWhitespace();
 
 	switch (*lexer->current)
 	{
@@ -539,7 +524,7 @@ static void ProcessToken(Token* token)
 	// Unknown token
 	Advance(1);
 
-	LogError("unexpected token '{}'", std::string_view(lexer->start, 6));
+	LogError("unexpected token '{}'", lexer->tokenStart);
 }
 
 Token Lexer::Next()
@@ -549,26 +534,25 @@ Token Lexer::Next()
 	// Advance
 	SkipWhitespace();
 
-	start = current;
+	tokenStart = current;
 
 	previousToken = currentToken;
 
 	ProcessToken(&currentToken);
-	const char* oldStart = start;
+	const char* oldStart = tokenStart;
 
 	// We don't want the lexer to *actually* advance when we process the next token
-	// so instead I use this little hack to revert current to what it was before
 	const char* oldCurrent = current;
 	int oldLine = line;
 	int oldColumn = column;
-	start = current;
+	tokenStart = current;
 	
 	SkipWhitespace();
 
 	ProcessToken(&nextToken);
 
 	current = oldCurrent;
-	start = oldStart;
+	tokenStart = oldStart;
 	line = oldLine;
 	column = oldColumn;
 
@@ -580,10 +564,11 @@ bool Lexer::Expect(TokenType type)
 	return currentToken.type == type;
 }
 
-Lexer::Lexer(const char* source)
+Lexer::Lexer(const File& file)
+	: file(file)
 {
 	lexer = this;
 
-	current = source;
-	start = current;
+	current = file.source.c_str();
+	tokenStart = current;
 }
