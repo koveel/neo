@@ -116,7 +116,8 @@ enum class BinaryType
 	Greater, GreaterEqual,
 
 	Range, // ..
-	MemberAccess, ConciseMemberAccess,
+	MemberAccess,
+	//ConciseMemberAccess,
 	Subscript,
 
 	Xor,

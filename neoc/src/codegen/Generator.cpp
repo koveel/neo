@@ -368,7 +368,12 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				aggregateInitializer = compound;
 				aggregateInitialization = true;
 
-				if (compound->type->IsArray()) // [...]
+				if (!compound->type) {
+					if (!type->IsStruct())
+						LogError("expected variable to be of a structure type for aggregate initialization");
+				}
+
+				if (compound->type && compound->type->IsArray()) // [...]
 				{
 					llvm::Value* initializer = Generator::CreateArrayAlloca(compound->type->raw, compound->children);
 					s_CurrentScope->AddValue(definition.name, { type = compound->type, initializer });

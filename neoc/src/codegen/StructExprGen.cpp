@@ -63,22 +63,16 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 			if (binary->binaryType != BinaryType::Assign)
 				throw CompileError(expr->sourceLine, "expected binary assignment expression");
 
-			// Why tf is concise binary a binary
-			auto concise = ToExpr<BinaryExpression>(binary->left);
-			ASSERT(concise);
+			auto member = ToExpr<VariableAccessExpression>(binary->left);
+			const std::string& memberName = member->name;
+			ASSERT(member);
 
-			if (concise->binaryType != BinaryType::ConciseMemberAccess)
-				throw CompileError(concise->sourceLine, "expected concise member access \".member\" for lhs of initializer");
-
-			VariableAccessExpression* variable = ToExpr<VariableAccessExpression>(concise->right);
-			ASSERT(variable);
-
-			uint32_t memberIndex = GetIndexOfMemberInStruct(variable->name, type);
+			uint32_t memberIndex = GetIndexOfMemberInStruct(memberName, type);
 			if (memberIndex == std::numeric_limits<uint32_t>::max())
-				throw CompileError(expr->sourceLine, "member '{}' doesn't exist in struct '{}'", variable->name.c_str(), type->GetName().c_str());
+				throw CompileError(expr->sourceLine, "member '{}' doesn't exist in struct '{}'", memberName.c_str(), type->GetName().c_str());
 
 			if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
-				throw CompileError(expr->sourceLine, "member '{}' appears multiple times in aggregate initializer. can only assign to it once", variable->name.c_str());
+				throw CompileError(expr->sourceLine, "member '{}' appears multiple times in aggregate initializer. can only assign to it once", memberName.c_str());
 			initializedMembers.push_back(memberIndex);
 
 			llvm::Value* value = Generator::LoadValueIfVariable(binary->right->Generate(), binary->right);
@@ -93,7 +87,7 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 		else
 		{
 			if (usedNamedInitialization)
-				throw CompileError(expr->sourceLine, "if using named initialization \".member = x\", must use it for all subsequent initializations");
+				throw CompileError(expr->sourceLine, "if using named initialization \"member = x\", must use it for all subsequent initializations");
 
 			llvm::Value* value = Generator::LoadValueIfVariable(expr->Generate(), expr);
 			uint32_t memberIndex = i++;

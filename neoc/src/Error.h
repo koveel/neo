@@ -7,7 +7,7 @@ void Internal_LogError(const std::string& error);
 template<typename... Args>
 static void LogError(const char* format, Args&&... args)
 {
-	Internal_LogError(FormatString(format, std::forward<Args>(args)...));
+ 	Internal_LogError(FormatString(format, std::forward<Args>(args)...));
 }
 
 // Error during code gen

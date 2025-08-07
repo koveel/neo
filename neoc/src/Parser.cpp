@@ -158,7 +158,7 @@ static int GetBinaryPriority(BinaryOperation operation)
 	{
 		case BinaryType::Subscript:
 		case BinaryType::MemberAccess:
-		case BinaryType::ConciseMemberAccess:
+		//case BinaryType::ConciseMemberAccess:
 			return 100;
 		case BinaryType::Divide:
 		case BinaryType::Multiply:
@@ -399,23 +399,23 @@ static std::unique_ptr<Expression> ParseUnaryExpression()
 		auto unary = makeUnary(UnaryType::Deref);
 		return unary;
 	}
-	case TokenType::Dot:
-	{
-		// member access with no lhs
-		auto binary = MakeExpression<BinaryExpression>();
-		binary->binaryType = BinaryType::ConciseMemberAccess;
-		binary->operatorToken = *token;
-
-		Advance();
-
-		std::string memberName = std::string(token->start, token->length);
-		auto variable = MakeExpression<VariableAccessExpression>();
-		variable->name = memberName;
-
-		Advance(); // through name
-		binary->right = std::move(variable);
-		return binary;
-	}
+	//case TokenType::Dot:
+	//{
+	//	// member access with no lhs
+	//	auto binary = MakeExpression<BinaryExpression>();
+	//	binary->binaryType = BinaryType::ConciseMemberAccess;
+	//	binary->operatorToken = *token;
+	//
+	//	Advance();
+	//
+	//	std::string memberName = std::string(token->start, token->length);
+	//	auto variable = MakeExpression<VariableAccessExpression>();
+	//	variable->name = memberName;
+	//
+	//	Advance(); // through name
+	//	binary->right = std::move(variable);
+	//	return binary;
+	//}
 	case TokenType::ID:
 	{
 		// 	Handle any postfix unary operators (i++)
@@ -584,6 +584,36 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	return node;
 }
 
+static std::unique_ptr<Expression> ParseCompoundExpressionAsStructAggregate(StructType* type)
+{
+	PROFILE_FUNCTION();
+
+	Token* token = &parser->current;
+
+	auto compound = MakeExpression<CompoundExpression>();
+	compound->type = type;
+
+	Expect(TokenType::LeftCurlyBracket, "expected '{{' to begin struct initializer");
+
+	// Parse the expressions in the block
+	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
+	{
+		compound->children.push_back(ParseExpression(-1));
+
+		if (token->type != TokenType::RightCurlyBracket) {
+			Expect(TokenType::Comma, "expected ',' to separate values in initializer");
+		}
+		else {
+			if (token->type == TokenType::Comma) // Allow trailing comma
+				Advance();
+		}
+	}
+
+	Expect(TokenType::RightCurlyBracket, "expected '}' to end initializer");
+
+	return compound;
+}
+
 static std::unique_ptr<Expression> ParseCompoundExpressionAsArray(Type* elementType, uint64_t elementCount)
 {
 	PROFILE_FUNCTION();
@@ -591,7 +621,7 @@ static std::unique_ptr<Expression> ParseCompoundExpressionAsArray(Type* elementT
 	Token* token = &parser->current;
 
 	auto compound = MakeExpression<CompoundExpression>();
-	Expect(TokenType::LeftCurlyBracket, "expected '{' to begin array");
+	Expect(TokenType::LeftCurlyBracket, "expected '{{' to begin array");
 
 	// Parse the expressions in the block
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
@@ -765,6 +795,12 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	if (parser->current.type == TokenType::Equal)
 	{
 		Advance(); // Through =
+
+		if (StructType* structType = variable->type->IsStruct()) {
+			variable->initializer = ParseCompoundExpressionAsStructAggregate(structType);
+			return variable;
+		}
+
 		if (ArrayType* arrayType = variable->type->IsArray()) {
 			variable->initializer = ParseCompoundExpressionAsArray(arrayType->contained, arrayType->count);
 			variable->type = variable->initializer->type;
@@ -779,6 +815,8 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 
 static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& functionName)
 {
+	PROFILE_FUNCTION();
+
 	Token* current = &parser->current;
 
 	Advance(); // Through ::
@@ -834,7 +872,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 
 		if (!isPrototype)
 		{
-			LogError("expected '{' to start function body for '{}'", functionName.c_str());
+			LogError("expected '{{' to start function body for '{}'", functionName.c_str());
 			return nullptr;
 		}
 		Advance();
@@ -901,7 +939,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 	structure->type = type;
 	type->definition = structure.get();
 
-	Expect(TokenType::LeftCurlyBracket, "expected '{' after 'struct'");
+	Expect(TokenType::LeftCurlyBracket, "expected '{{' after 'struct'");
 
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
 	{
@@ -1056,7 +1094,13 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 		}
 	}
 
+	bool probablyStructAggregateInit = next->type == TokenType::LeftCurlyBracket;
 	Advance();
+
+	if (probablyStructAggregateInit) {
+		Type* type = Type::Get(identifier);
+		return ParseCompoundExpressionAsStructAggregate(type->IsStruct());
+	}
 
 	auto read = MakeExpression<VariableAccessExpression>();
 	read->name = identifier;
@@ -1146,7 +1190,7 @@ static std::unique_ptr<Expression> ParseCompoundStatement(TokenType statementDel
 {
 	PROFILE_FUNCTION();
 
-	Expect(TokenType::LeftCurlyBracket, "expect '{' to begin compound statement");
+	Expect(TokenType::LeftCurlyBracket, "expect '{{' to begin compound statement");
 		
 	Token* token = &parser->current;
 	auto compound = MakeExpression<CompoundExpression>();
