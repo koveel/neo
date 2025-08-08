@@ -58,11 +58,9 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 	uint32_t i = 0;
 	for (auto& expr : initializer->children)
 	{
-		if (auto binary = ToExpr<BinaryExpression>(expr))
+		BinaryExpression* binary = nullptr;
+		if ((binary = ToExpr<BinaryExpression>(expr)) && binary->binaryType == BinaryType::Assign)
 		{
-			if (binary->binaryType != BinaryType::Assign)
-				throw CompileError(expr->sourceLine, "expected binary assignment expression");
-
 			auto member = ToExpr<VariableAccessExpression>(binary->left);
 			const std::string& memberName = member->name;
 			ASSERT(member);

@@ -565,6 +565,11 @@ llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
 	return s_Builder->CreateStore(value, ptr);
 }
 
+llvm::Value* Generator::EmitLoad(llvm::Value* ptr)
+{
+	return s_Builder->CreateLoad(ptr);
+}
+
 llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
 {
 	return s_Builder->CreateBinOp((llvm::Instruction::BinaryOps)op, lhs, rhs);
@@ -582,9 +587,17 @@ llvm::Value* Generator::EmitAlloca(llvm::Type* type, llvm::Value* arraySize)
 
 llvm::Value* CompoundExpression::Generate()
 {
-	if (type && type->IsArray()) // array create [...]
-		return nullptr;
-		//return CreateArrayAlloca(type->raw, children);
+	if (type) {
+		if (StructType* structType = type->IsStruct()) {
+			//if (!structType->raw) {
+			//	// The type wasn't resolved
+			//}
+
+			llvm::Value* structPtr = Generator::EmitAlloca(structType->raw);
+			Generator::InitializeStructMembersAggregate(structPtr, structType, this);
+			return structPtr;
+		}
+	}
 
 	s_CurrentScope = s_CurrentScope->Deepen();
 
@@ -637,7 +650,7 @@ llvm::Value* BranchExpression::Generate()
 	if (branches.size() > 1)
 		falseBlock = generateBranch(branches[branches.size() - 1], "bfalse");
 
-	llvm::Value* condition = ifBranch.condition->Generate();
+	llvm::Value* condition = Generator::LoadValueIfVariable(ifBranch.condition->Generate(), ifBranch.condition);
 	llvm::BranchInst* branchInst = s_Builder->CreateCondBr(condition, trueBlock, endBlock);
 	s_Builder->SetInsertPoint(endBlock);
 
@@ -785,6 +798,8 @@ llvm::Value* LoopExpression::Generate()
 	return endBlock;
 }
 
+static inline bool s_GeneratedTerminatorForCurrentFunction = false;
+
 llvm::Value* FunctionDefinitionExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -842,7 +857,9 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		s_CurrentScope = s_CurrentScope->Increase();
 
 		// Insert terminator
-		//s_Builder->CreateBr(s_CurrentFunction.returnBlock);
+		if (!s_GeneratedTerminatorForCurrentFunction)
+			s_Builder->CreateBr(s_CurrentFunction.returnBlock);
+
 		s_Builder->SetInsertPoint(s_CurrentFunction.returnBlock);
 
 		if (isVoid)
@@ -888,6 +905,8 @@ llvm::Value* ReturnStatement::Generate()
 	PROFILE_FUNCTION();
 
 	type = FindNeoTypeFromLLVMType(s_CurrentFunction.llvmFunction->getReturnType());
+
+	s_GeneratedTerminatorForCurrentFunction = true;
 
 	if (type->tag == TypeTag::Void)
 	{
@@ -1042,8 +1061,10 @@ static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
 	if (type.raw)
 		return;
 
-	if (!type.definition)
-		throw CompileError(possibleSourceLine, "type '{}' not defined", type.name.c_str());
+	if (!type.definition) {
+		return;
+	}
+		//throw CompileError(possibleSourceLine, "type '{}' not defined", type.name.c_str());
 
 	auto& members = type.definition->members;
 

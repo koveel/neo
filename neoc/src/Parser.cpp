@@ -148,7 +148,6 @@ static int GetUnaryPriority(UnaryType unary)
 	return 0;
 }
 
-//static int GetBinaryPriority(BinaryType type)
 static int GetBinaryPriority(BinaryOperation operation)
 {
 	if (operation.compoundAssignment)
@@ -158,7 +157,7 @@ static int GetBinaryPriority(BinaryOperation operation)
 	{
 		case BinaryType::Subscript:
 		case BinaryType::MemberAccess:
-		//case BinaryType::ConciseMemberAccess:
+		case BinaryType::Range:
 			return 100;
 		case BinaryType::Divide:
 		case BinaryType::Multiply:
@@ -188,7 +187,6 @@ static int GetBinaryPriority(BinaryOperation operation)
 			return 90;
 		case BinaryType::Or:
 			return 89;
-		case BinaryType::Range:
 		case BinaryType::Assign:
 			return 88;
 	}
@@ -268,7 +266,14 @@ static char CharFromTokenType(TokenType type)
 static std::unique_ptr<Expression> ParseLine(TokenType expectedEndline = TokenType::Semicolon)
 {
 	bool expectEndingToken = true;
-	auto expr = ParseExpression(-1);
+	Token* token = &parser->lexer->currentToken;
+	int priority = -1;
+
+	if (token->type == TokenType::For || token->type == TokenType::If) {
+		priority = 100;
+	}
+
+	auto expr = ParseExpression(priority);
 
 	switch (expr->nodeType)
 	{
@@ -584,6 +589,8 @@ static std::unique_ptr<Expression> ParseReturnStatement()
 	return node;
 }
 
+static bool s_IsParsingCompoundAsBlock = false;
+
 static std::unique_ptr<Expression> ParseCompoundExpressionAsStructAggregate(StructType* type)
 {
 	PROFILE_FUNCTION();
@@ -598,8 +605,12 @@ static std::unique_ptr<Expression> ParseCompoundExpressionAsStructAggregate(Stru
 	// Parse the expressions in the block
 	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
 	{
-		compound->children.push_back(ParseExpression(-1));
+		if (s_IsParsingCompoundAsBlock) {
+			compound->children.push_back(ParseLine());
+			continue;
+		}
 
+		compound->children.push_back(ParseExpression(-1));
 		if (token->type != TokenType::RightCurlyBracket) {
 			Expect(TokenType::Comma, "expected ',' to separate values in initializer");
 		}
@@ -687,58 +698,6 @@ static std::unique_ptr<Expression> ParseArray()
 
 	// Parse the expressions in the block
 	return ParseCompoundExpressionAsArray(elementType, elementCount);
-}
-
-// expects array type   []x
-static std::unique_ptr<Expression> ParseArrayDefinition(VariableDefinitionExpression* definition)
-{
-	PROFILE_FUNCTION();
-
-	Token* token = &parser->current;
-	Advance();
-
-	auto array = MakeExpression<ArrayDefinitionExpression>();
-	array->variableDef = definition;
-
-	bool dynamic = false;
-	if (token->type == TokenType::MiniEllipsis)
-	{
-		// Dynamic array
-		dynamic = true;
-		Expect(TokenType::RightSquareBracket, "expected ']' after '..'");
-	}
-	else
-	{
-		// todo: constant variables
-		Token number = *token;
-		Expect(TokenType::Number, "expected number for capacity after '['");
-
-		if (strnchr(number.start, '.', number.length))
-			LogError("array capacity must be integer");
-
-		array->capacity = (uint64_t)strtoul(number.start, nullptr, 0);
-
-		//array->capacityExpr = ParseExpression(-1);
-		Expect(TokenType::RightSquareBracket, "expected ']' after expression");
-	}
-
-	Token typeToken = *token;
-	Expect(TokenType::ID, "expected identifier after ']'");
-	
-	// Get type
-	std::string typeName = std::string(typeToken.start, typeToken.length);
-	Type* elementType = Type::Get(typeName);
-	ArrayType* type = ArrayType::Get(elementType, array->capacity);
-	array->type = type;
-
-	// Initializer?
-	if (token->type == TokenType::Equal)
-	{
-		Advance();
-		array->initializer = ParseExpression(-1);
-	}
-
-	return array;
 }
 
 static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
@@ -1030,6 +989,7 @@ static std::unique_ptr<Expression> ParseLoop()
 
 	Expect(TokenType::Colon, "expected ':' after identifier");
 
+	s_IsParsingCompoundAsBlock = true;
 	loop->range = ParseExpression(-1);
 
 	//Expect(TokenType::RightParen, "expected ')' after expression");
@@ -1047,6 +1007,7 @@ static std::unique_ptr<Expression> ParseLoop()
 
 		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for loop");
 	}
+	s_IsParsingCompoundAsBlock = false;
 
 	return loop;
 }
@@ -1095,9 +1056,11 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 	}
 
 	bool probablyStructAggregateInit = next->type == TokenType::LeftCurlyBracket;
+
+	Token prev = *token;
 	Advance();
 
-	if (probablyStructAggregateInit) {
+	if (probablyStructAggregateInit && !s_IsParsingCompoundAsBlock) {
 		Type* type = Type::Get(identifier);
 		return ParseCompoundExpressionAsStructAggregate(type->IsStruct());
 	}
@@ -1161,6 +1124,7 @@ static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType)
 	Token* current = &parser->current;
 	auto branch = MakeExpression<BranchExpression>();
 
+	s_IsParsingCompoundAsBlock = true;
 	branch->branches.push_back(ParseBranch(0));
 	bool hasElse = false;
 
@@ -1182,6 +1146,7 @@ static std::unique_ptr<Expression> ParseBranchStatement(TokenType branchType)
 
 		branch->branches.push_back(ParseBranch(2));
 	}
+	s_IsParsingCompoundAsBlock = false;
 
 	return branch;
 }
