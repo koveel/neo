@@ -18,7 +18,7 @@ static File ReadFile(const std::filesystem::path& filepath)
 
 	if (!stream.good())
 	{
-		fprintf(stderr, "failed to open file \"%s\".\n", filepath);
+		fprintf(stderr, "failed to open file \"%s\".\n", filepath.c_str());
 		return {};
 	}
 

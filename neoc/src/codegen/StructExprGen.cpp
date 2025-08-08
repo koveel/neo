@@ -17,10 +17,14 @@ void Generator::InitializeStructMembersToDefault(llvm::Value* structPtr, StructT
 	for (auto& member : definition->members)
 	{
 		auto& init = member->initializer;
-		if (!init || init->nodeType == NodeType::ArrayDefinition || init->nodeType == NodeType::ArrayInitialize) // TODO: default initialize primitive types
-			continue;
+		llvm::Value* initialValue = nullptr;
+		if (!init) {
+			initialValue = Generator::GetNumericConstant(member->type->tag, 0);
+		}
+		else {
+			initialValue = init->Generate();
+		}
 
-		llvm::Value* initialValue = init->Generate();
 		llvm::Value* memberPtr = Generator::EmitStructGEP(structPtr, i++);
 		Generator::EmitStore(initialValue, memberPtr);
 	}
@@ -35,7 +39,7 @@ static uint32_t GetIndexOfMemberInStruct(const std::string& targetMember, Struct
 	uint32_t i = 0;
 	for (auto& member : definition->members)
 	{
-		if (targetMember == member->definition.name)
+		if (targetMember == member->name)
 			return i;
 
 		i++;
@@ -108,7 +112,7 @@ llvm::Value* StructDefinitionExpression::Generate()
 			continue;
 
 		throw CompileError(vardef->sourceLine, "unresolved type '{}' for member '{}' in struct '{}'",
-			memberType->GetName().c_str(), vardef->definition.name.c_str(), name.c_str());
+			memberType->GetName().c_str(), vardef->name.c_str(), name.c_str());
 	}
 
 	return nullptr;

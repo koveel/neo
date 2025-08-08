@@ -535,7 +535,6 @@ Token Lexer::Next()
 	SkipWhitespace();
 
 	tokenStart = current;
-
 	previousToken = currentToken;
 
 	ProcessToken(&currentToken);
@@ -564,8 +563,8 @@ bool Lexer::Expect(TokenType type)
 	return currentToken.type == type;
 }
 
-Lexer::Lexer(const File& file)
-	: file(file)
+Lexer::Lexer(const File& _file)
+	: file(_file)
 {
 	lexer = this;
 

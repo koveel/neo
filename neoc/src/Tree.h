@@ -15,6 +15,7 @@ enum class NodeType
 	Branch, Loop, LoopControlFlow, Range, ArrayInitialize,
 	FunctionDefinition, FunctionCall, Return,
 	StructDefinition, ArrayDefinition,
+	ConstantDefinition,
 };
 
 struct ASTNode
@@ -245,19 +246,40 @@ enum class DefinitionFlags : uint32_t
 	Internal = 1 << 0,
 };
 
-struct VariableDefinitionExpression : public Expression
+struct DefinitionStatement : public Expression
 {
-	struct Definition
-	{
-		std::string name;
-		DefinitionFlags flags = (DefinitionFlags)0;
-	} definition;
+	using Expression::Expression;
 
+	std::string name;
+	DefinitionFlags flags = (DefinitionFlags)0;
+
+	std::unique_ptr<Expression> initializer = nullptr;
+};
+
+struct ConstantDefinitionExpression : public DefinitionStatement
+{
+	// only ids for now
+	std::string lhs, rhs;
+
+	ConstantDefinitionExpression(uint32_t line)
+		: DefinitionStatement(line)
+	{
+		nodeType = GetNodeType();
+	}
+
+	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::ConstantDefinition; }
+
+	void ResolveType() override;
+};
+
+struct VariableDefinitionExpression : public DefinitionStatement
+{
 	std::shared_ptr<Expression> initializer = nullptr;
 	std::vector<std::string> succeedingDefinitionNames;
 
 	VariableDefinitionExpression(uint32_t line)
-		: Expression(line)
+		: DefinitionStatement(line)
 	{
 		nodeType = GetNodeType();
 	}
@@ -269,15 +291,14 @@ struct VariableDefinitionExpression : public Expression
 };
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
-struct ArrayDefinitionExpression : public Expression
+struct ArrayDefinitionExpression : public DefinitionStatement
 {
 	VariableDefinitionExpression* variableDef = nullptr;
 
 	uint64_t capacity = 0; // todo: make expr
-	std::unique_ptr<Expression> initializer;
 
 	ArrayDefinitionExpression(uint32_t line)
-		: Expression(line)
+		: DefinitionStatement(line)
 	{
 		nodeType = GetNodeType();
 	}

@@ -15,11 +15,13 @@ enum class TypeTag
 	String,
 	Array,
 	Struct,
+	Alias,
 
 	COUNT,
 };
 
 class Type;
+class AliasType;
 class StructType;
 class ArrayType;
 
@@ -64,13 +66,15 @@ public:
 
 	StructType* IsStruct();
 	ArrayType* IsArray();
+	AliasType* IsAlias();
+	AliasType* IsAliasFor(Type* other);
 
 	bool IsPointer() const { return tag == TypeTag::Pointer; }
 	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
 	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
 	bool IsString() const { return tag == TypeTag::String; }
-	
+
 	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
 	uint32_t GetBitWidth() const
 	{
@@ -108,6 +112,27 @@ public:
 	static std::unordered_map<Key, Type*> RegisteredTypes;
 };
 
+class AliasType : public Type
+{
+public:
+	using Type::Type;
+
+	AliasType(Type* aliasFor, const std::string& name)
+		: aliasedType(aliasFor), name(name)
+	{
+		tag = TypeTag::Alias;
+	}
+
+	std::string GetName() override { return name; }
+
+	static AliasType* Get(Type* aliasFor, const std::string& name);
+public:
+	std::string name;
+	Type* aliasedType = nullptr;
+
+	static std::unordered_map<std::string, AliasType*> RegisteredTypes;
+};
+
 class StructType : public Type
 {
 public:
@@ -119,7 +144,7 @@ public:
 		tag = TypeTag::Struct;
 	}
 
-	virtual std::string GetName() { return name; }
+	std::string GetName() override { return name; }
 
 	static StructType* Get(const std::string& name, const std::vector<Type*>& members = {});
 public:
@@ -150,7 +175,8 @@ public:
 	static ArrayType* Get(Type* elementType, uint64_t count);
 	
 	// Used within a variable definition to keep track of the fact that it's an array, without needing the actual element type or count
-	// used when inferring type / count
+	// used when inferring type idk
+	// arr := [] { ... }
 	static ArrayType* Dummy(uint64_t capacity = 0);
 public:
 	uint64_t count = 0;

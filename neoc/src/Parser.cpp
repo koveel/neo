@@ -620,7 +620,7 @@ static std::unique_ptr<Expression> ParseCompoundExpressionAsStructAggregate(Stru
 		}
 	}
 
-	Expect(TokenType::RightCurlyBracket, "expected '}' to end initializer");
+	Expect(TokenType::RightCurlyBracket, "expected '}}' to end initializer");
 
 	return compound;
 }
@@ -648,7 +648,7 @@ static std::unique_ptr<Expression> ParseCompoundExpressionAsArray(Type* elementT
 		}
 	}
 
-	Expect(TokenType::RightCurlyBracket, "expected '}' to end array");
+	Expect(TokenType::RightCurlyBracket, "expected '}}' to end array");
 	
 	// Type
 	if (!elementType) {
@@ -712,7 +712,7 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 	std::string variableName = std::string(nameToken.start, nameToken.length);
 
 	auto variable = MakeExpression<VariableDefinitionExpression>();
-	variable->definition.name = std::string(nameToken.start, nameToken.length);
+	variable->name = std::string(nameToken.start, nameToken.length);
 
 	Token* token = &parser->current;
 	if (token->type == TokenType::Comma)
@@ -756,7 +756,10 @@ static std::unique_ptr<Expression> ParseVariableDefinitionStatement()
 		Advance(); // Through =
 
 		if (StructType* structType = variable->type->IsStruct()) {
-			variable->initializer = ParseCompoundExpressionAsStructAggregate(structType);
+			variable->initializer =
+				token->type == TokenType::LeftCurlyBracket ?
+				ParseCompoundExpressionAsStructAggregate(structType) :
+				ParseExpression(-1);
 			return variable;
 		}
 
@@ -801,7 +804,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 		{
 			auto param = MakeExpression<VariableDefinitionExpression>();
 			param->type = variable->type;
-			param->definition.name = name;
+			param->name = name;
 			//param->initializer = variable->initializer;
 
 			prototype.Parameters.push_back(std::move(param));
@@ -852,7 +855,7 @@ static std::unique_ptr<Expression> ParseFunctionDefinition(const std::string& fu
 				continue;
 			}
 		}
-		Expect(TokenType::RightCurlyBracket, "expected '}' to close function body");
+		Expect(TokenType::RightCurlyBracket, "expected '}}' to close function body");
 	}
 
 	return function;
@@ -918,7 +921,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 			auto var = MakeExpression<VariableDefinitionExpression>();
 			var->type = variable->type;
 			var->initializer = variable->initializer;
-			var->definition.name = name;
+			var->name = name;
 
 			type->members.push_back(var->type);
 			structure->members.push_back(std::move(var));
@@ -937,7 +940,7 @@ static std::unique_ptr<Expression> ParseStructDefinition(const std::string& stru
 		Expect(TokenType::Semicolon, "expected ';' after variable definition");
 	}
 
-	Expect(TokenType::RightCurlyBracket, "expected '}' to end struct definition");
+	Expect(TokenType::RightCurlyBracket, "expected '}}' to end struct definition");
 
 	return structure;
 }
@@ -1005,7 +1008,7 @@ static std::unique_ptr<Expression> ParseLoop()
 		while (current->type != TokenType::RightCurlyBracket && current->type != TokenType::Eof)
 			loop->body.push_back(ParseLine());
 
-		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for loop");
+		Expect(TokenType::RightCurlyBracket, "expected '}}' to close body for loop");
 	}
 	s_IsParsingCompoundAsBlock = false;
 
@@ -1034,6 +1037,16 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 				case TokenType::Struct:
 				{
 					return ParseStructDefinition(identifier);
+				}
+				case TokenType::ID:
+				{
+					// Alias or constant
+					Advance();
+					std::string aliased = std::string(token->start, token->length);
+					Advance();
+
+					AliasType::Get(Type::Get(aliased), identifier);
+					return MakeExpression<ConstantDefinitionExpression>();
 				}
 			}
 
@@ -1109,7 +1122,7 @@ static BranchExpression::Branch ParseBranch(uint32_t branchType)
 			branch.body.push_back(std::move(expr));
 		}
 
-		Expect(TokenType::RightCurlyBracket, "expected '}' to close body for {}", branchKeyword);
+		Expect(TokenType::RightCurlyBracket, "expected '}}' to close body for {}", branchKeyword);
 	}
 	
 	return branch;
@@ -1174,7 +1187,7 @@ static std::unique_ptr<Expression> ParseCompoundStatement(TokenType statementDel
 		}
 	}
 
-	Expect(TokenType::RightCurlyBracket, "expect '}' to end compound statement");
+	Expect(TokenType::RightCurlyBracket, "expect '}}' to end compound statement");
 
 	return compound;
 }
@@ -1214,6 +1227,8 @@ static bool AttemptSynchronization()
 
 	if (current->type == TokenType::Eof)
 		return false;
+
+	// TODO; Don't consume curly if its a definition?
 
 	Advance(); // Through ; or }
 

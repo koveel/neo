@@ -10,12 +10,13 @@
 static std::pair<std::string_view, size_t> BuildSourceViewString(const Lexer& lexer)
 {
 	const char* filesource = lexer.file.source.c_str();
-	size_t rangeOffset = lexer.current - filesource;
+	const char* errorLocation = lexer.previousToken.start + lexer.previousToken.length;
+	size_t rangeOffset = errorLocation - filesource;
 
 	// Get just the error line
 	// most braindead way to do this ever?
 	size_t lhs = rangeOffset;
-	while (true)
+	while (lhs > 0)
 	{
 		char current = filesource[--lhs];
 		if (current == '\n')
@@ -28,7 +29,7 @@ static std::pair<std::string_view, size_t> BuildSourceViewString(const Lexer& le
 		}
 	}
 	size_t rhs = rangeOffset;
-	while (true)
+	while (rhs < lexer.file.length())
 	{
 		char current = filesource[rhs];
 		if (current == '\n' || current == '\0')
@@ -37,10 +38,11 @@ static std::pair<std::string_view, size_t> BuildSourceViewString(const Lexer& le
 		rhs++;
 	}
 
+
 	size_t lineLength = rhs - lhs;
 	std::string_view line = { filesource + lhs, lineLength };
-	size_t errorIndex = rangeOffset - lhs;
-	return { line, errorIndex - 1 };
+
+	return { line, rangeOffset - lhs };
 }
 
 void Internal_LogError(const std::string& error)

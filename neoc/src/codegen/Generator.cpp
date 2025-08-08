@@ -96,6 +96,10 @@ llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* t
 	if (from == to)
 		return v;
 
+	bool isAnAlias = from->IsAliasFor(to) || to->IsAliasFor(from);
+	if (isAnAlias)
+		return v;
+
 	Cast* cast = Cast::IsValid(from, to);
 	if (!cast)
 		throw CompileError(source->sourceLine, "cannot cast from '{}' to '{}'", from->GetName().c_str(), to->GetName().c_str());
@@ -376,7 +380,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				if (compound->type && compound->type->IsArray()) // [...]
 				{
 					llvm::Value* initializer = Generator::CreateArrayAlloca(compound->type->raw, compound->children);
-					s_CurrentScope->AddValue(definition.name, { type = compound->type, initializer });
+					s_CurrentScope->AddValue(name, { type = compound->type, initializer });
 					return initializer;
 				}
 
@@ -397,17 +401,25 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	}
 
 	// Alloc
-	llvm::Value* alloc = s_Builder->CreateAlloca(type->raw);
-	s_CurrentScope->AddValue(definition.name, { type, alloc });
+	llvm::Value* alloc = s_Builder->CreateAlloca(type->raw, nullptr, name);
+	s_CurrentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
 	if (StructType* structType = type->IsStruct())
 	{
-		if (aggregateInitialization)
+		if (aggregateInitialization) {
 			Generator::InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
+			return alloc;
+		}
 		
-		if (!initializer)
+		if (!initializer) {
 			Generator::InitializeStructMembersToDefault(alloc, structType);
+			return alloc;
+		}
+
+		//initialVal = Generator::LoadValueIfVariable(initializer->Generate(), initializer);
+		initialVal = initializer->Generate();
+		s_Builder->CreateStore(initialVal, alloc);
 
 		return alloc;
 	}
@@ -536,7 +548,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	for (uint32_t i = 0; i < members.size(); i++)
 	{
 		auto& member = members[i];
-		if (member->definition.name == targetMemberName)
+		if (member->name == targetMemberName)
 		{
 			binary->type = member->type;
 			memberIndex = i;
@@ -583,6 +595,11 @@ llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, ll
 llvm::Value* Generator::EmitAlloca(llvm::Type* type, llvm::Value* arraySize)
 {
 	return s_Builder->CreateAlloca(type, arraySize);
+}
+
+llvm::Value* ConstantDefinitionExpression::Generate()
+{
+	return nullptr;
 }
 
 llvm::Value* CompoundExpression::Generate()
@@ -834,8 +851,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 	for (auto& arg : s_CurrentFunction.llvmFunction->args())
 	{
 		auto& parameter = prototype.Parameters[i++];
-		auto& def = parameter->definition;
-		arg.setName(def.name);
+		arg.setName(parameter->name);
 
 		if (!hasBody)
 			continue;
@@ -843,7 +859,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		// Alloc arg
 		llvm::Value* alloc = s_Builder->CreateAlloca(arg.getType());
 		s_Builder->CreateStore(&arg, alloc);
-		s_CurrentScope->AddValue(def.name, { parameter->type, alloc });
+		s_CurrentScope->AddValue(parameter->name, { parameter->type, alloc });
 	}
 
 	// Gen body
@@ -987,7 +1003,7 @@ static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 
 	// Already resolved?
 	if (type.raw)
-		return;
+		return;	
 
 	if (type.IsPointer())
 	{
@@ -1059,12 +1075,12 @@ static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
 
 	// Already resolved?
 	if (type.raw)
-		return;
+		return;	
 
 	if (!type.definition) {
 		return;
 	}
-		//throw CompileError(possibleSourceLine, "type '{}' not defined", type.name.c_str());
+	//throw CompileError(possibleSourceLine, "type '{}' not defined", type.name.c_str());
 
 	auto& members = type.definition->members;
 
@@ -1094,8 +1110,22 @@ static void ResolveArrayType(ArrayType& type, int possibleSourceLine = -1)
 	type.raw = llvm::ArrayType::get(elementType->raw, type.count);
 }
 
+static AliasType* IsTypeNameAnAlias(const std::string& name);
+
 static void ResolveType(Type& type, int line)
 {
+	std::string typeName = type.GetName();
+
+	bool isNamedType = type.tag == TypeTag::Struct || type.tag == TypeTag::Alias;
+	AliasType* alias = nullptr;
+	if (isNamedType && (alias = type.IsAlias()))
+	{
+		ASSERT(alias->aliasedType);
+		ResolveType(*alias->aliasedType);
+		type.raw = alias->aliasedType->raw;
+		return;
+	}
+
 	switch (type.tag)
 	{
 	case TypeTag::Array:
@@ -1105,7 +1135,15 @@ static void ResolveType(Type& type, int line)
 	}
 	case TypeTag::Struct:
 	{
-		ResolveStructType(*type.IsStruct(), line);
+		StructType* structTy = type.IsStruct();
+		if (AliasType* alias = IsTypeNameAnAlias(structTy->name))
+		{
+			ResolveType(*alias);
+			type = *alias;
+			return;
+		}
+
+		ResolveStructType(*structTy, line);
 		return;
 	}
 	default:
@@ -1172,17 +1210,18 @@ namespace CastFunctions
 {
 	// Int / int
 	static llvm::Value* SInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateSExtOrTrunc(integer, to);
+		return s_Builder->CreateZExtOrTrunc(integer, to);
 	}
 	static llvm::Value* UInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
 		return s_Builder->CreateZExtOrTrunc(integer, to);
 	}
 
 	static llvm::Value* SInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return integer;
+		return s_Builder->CreateZExtOrTrunc(integer, to);
 	}
 	static llvm::Value* UInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return integer;
+		return s_Builder->CreateZExtOrTrunc(integer, to);
+		//return integer;
 	}
 
 	// Float / float
@@ -1293,8 +1332,8 @@ static void InitPrimitiveCasts()
 		}
 
 		// UInt / bool
-		Cast::Add(uint, b1, CastFunctions::SInteger_To_SInteger, true);
-		Cast::Add(b1, uint, CastFunctions::SInteger_To_SInteger, true);
+		Cast::Add(uint, b1, CastFunctions::UInteger_To_SInteger, true);
+		Cast::Add(b1, uint, CastFunctions::SInteger_To_UInteger, true);
 
 		// UInt / FP
 		for (Type* fp : fpTypes)
@@ -1331,6 +1370,58 @@ static void ResolveParsedTypes(ParseResult& result)
 	}
 
 	VisitFunctionDefinitions(result);
+}
+
+AliasType* IsTypeNameAnAlias(const std::string& name)
+{
+	if (AliasType::RegisteredTypes.count(name))
+		return AliasType::RegisteredTypes[name];
+
+	return nullptr;
+}
+
+AliasType* Type::IsAlias()
+{
+	if (tag != TypeTag::Alias)
+		return nullptr;
+
+	std::string name = GetName();
+	if (AliasType::RegisteredTypes.count(name))
+	{
+		AliasType* alias = AliasType::RegisteredTypes[name];
+		ResolveType(*alias->aliasedType);
+		return alias;
+	}
+}
+
+AliasType* Type::IsAliasFor(Type* other)
+{
+	if (tag != TypeTag::Alias)
+		return nullptr;
+
+	std::string name = GetName();
+	if (AliasType::RegisteredTypes.count(name))
+	{
+		AliasType* alias = AliasType::RegisteredTypes[name];
+		ResolveType(*alias->aliasedType);
+		
+		if (alias->aliasedType == other)
+			return alias;
+	}
+
+	return nullptr;
+}
+
+StructType* Type::IsStruct()
+{
+	if (AliasType* alias = IsAlias()) {
+		return alias->aliasedType->IsStruct();
+	}
+
+	if (tag == TypeTag::Struct)
+		return static_cast<StructType*>(this);
+
+	return nullptr;
 }
 
 Type* Type::GetContainedType() const

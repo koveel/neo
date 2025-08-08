@@ -3,6 +3,7 @@
 #include "Type.h"
 
 std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
+std::unordered_map<std::string, AliasType*> AliasType::RegisteredTypes;
 std::unordered_map<std::string, StructType*> StructType::RegisteredTypes;
 std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
  
@@ -38,6 +39,12 @@ std::string Type::TagToString(TypeTag tag, Type* type)
 			return pair.second;
 	}
 
+	AliasType* alias = nullptr;
+	if (tag == TypeTag::Struct && (alias = type->IsAlias()))
+	{
+		return alias->name;
+	}
+
 	ASSERT(false);
 }
 
@@ -63,14 +70,6 @@ static TypeTag TagFromString(const char* str)
 	return TypeTag::Unresolved;
 }
 
-StructType* Type::IsStruct()
-{
-	if (tag == TypeTag::Struct)
-		return static_cast<StructType*>(this);
-
-	return nullptr;
-}
-
 ArrayType* Type::IsArray()
 {
 	if (tag == TypeTag::Array)
@@ -94,6 +93,16 @@ Type* Type::Get(const std::string& name, Type* contained)
 	TypeTag tag = TagFromString(name.c_str());
 
 	return tag != TypeTag::Unresolved ? Get(tag, contained) : StructType::Get(name);
+}
+
+AliasType* AliasType::Get(Type* aliasFor, const std::string& name)
+{
+	ASSERT(name.length());
+
+	if (RegisteredTypes.count(name))
+		return RegisteredTypes[name];
+
+	return RegisteredTypes[name] = new AliasType(aliasFor, name);
 }
 
 StructType* StructType::Get(const std::string& name, const std::vector<Type*>& members)

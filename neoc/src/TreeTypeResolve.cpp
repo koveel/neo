@@ -46,6 +46,11 @@ void LoopExpression::ResolveType()
 		expr->ResolveType();
 }
 
+void ConstantDefinitionExpression::ResolveType()
+{
+	//type = Type::Get(rhs);
+}
+
 void VariableDefinitionExpression::ResolveType()
 {
 	if (initializer)
