@@ -427,6 +427,11 @@ static void ProcessToken(Token* token)
 			*token = MakeToken(TokenType::Else, 4);
 			return;
 		}
+		if (CheckKeyword("enum", 4))
+		{
+			*token = MakeToken(TokenType::Enum, 4);
+			return;
+		}
 
 		break;
 	}

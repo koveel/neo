@@ -282,6 +282,7 @@ static std::unique_ptr<Expression> ParseLine(TokenType expectedEndline = TokenTy
 	case NodeType::Compound:
 	case NodeType::StructDefinition:
 	case NodeType::FunctionDefinition:
+	case NodeType::EnumDefinition:
 		expectEndingToken = false;
 		break;
 	}
@@ -887,6 +888,35 @@ static std::unique_ptr<Expression> ParseFunctionCall()
 	return call;
 }
 
+static std::unique_ptr<Expression> ParseEnumDefinition(const std::string& enumName)
+{
+	Token* token = &parser->current;
+
+	Advance(); // Through ::
+	Advance(); // Through enum
+
+	auto enume = MakeExpression<EnumDefinitionExpression>();
+	enume->name = enumName;
+
+	Type* integerType = Type::Get(TypeTag::Int32);
+	if (token->type != TokenType::LeftCurlyBracket)
+		integerType = ParseType();
+
+	enume->type = AliasType::Get(integerType, enumName);
+
+	Expect(TokenType::LeftCurlyBracket, "expected '{{' to begin enum");
+
+	while (token->type != TokenType::RightCurlyBracket && token->type != TokenType::Eof)
+	{
+		enume->members.push_back(ParseExpression(-1));
+		Expect(TokenType::Comma, "expected ',' to seperate enum members");
+	}
+
+	Expect(TokenType::RightCurlyBracket, "expected '}}' to end enum");
+
+	return enume;
+}
+
 static std::unique_ptr<Expression> ParseStructDefinition(const std::string& structName)
 {
 	Token* token = &parser->current;
@@ -1037,6 +1067,10 @@ static std::unique_ptr<Expression> ParseIdentifierExpression()
 				case TokenType::Struct:
 				{
 					return ParseStructDefinition(identifier);
+				}
+				case TokenType::Enum:
+				{
+					return ParseEnumDefinition(identifier);
 				}
 				case TokenType::ID:
 				{

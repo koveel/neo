@@ -15,7 +15,7 @@ enum class NodeType
 	Branch, Loop, LoopControlFlow, Range, ArrayInitialize,
 	FunctionDefinition, FunctionCall, Return,
 	StructDefinition, ArrayDefinition,
-	ConstantDefinition,
+	ConstantDefinition, EnumDefinition,
 };
 
 struct ASTNode
@@ -380,6 +380,21 @@ struct ReturnStatement : public Expression
 	static NodeType GetNodeType() { return NodeType::Return; }
 
 	void ResolveType() override;
+};
+
+struct EnumDefinitionExpression : public Expression
+{
+	std::string name;
+	std::vector<std::unique_ptr<Expression>> members;
+
+	EnumDefinitionExpression(uint32_t line)
+		: Expression(line)
+	{
+		nodeType = GetNodeType();
+	}
+
+	llvm::Value* Generate() override;
+	static NodeType GetNodeType() { return NodeType::EnumDefinition; }
 };
 
 struct StructDefinitionExpression : public Expression

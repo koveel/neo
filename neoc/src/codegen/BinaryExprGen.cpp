@@ -142,7 +142,7 @@ llvm::Value* BinaryExpression::Generate()
 	using namespace llvm;
 
 	if (binaryType == BinaryType::MemberAccess)
-		return Generator::EmitStructureMemberAccess(this);
+		return Generator::HandleMemberAccessExpression(this);
 	if (binaryType == BinaryType::Subscript)
 		return Generator::EmitSubscript(this);
 

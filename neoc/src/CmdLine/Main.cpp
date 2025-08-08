@@ -88,7 +88,7 @@ int main(int argc, const char* argv[])
 
 	if (parseResult.Succeeded)
 	{
-		Generator generator;
+		Generator generator(parseResult.module);
 		auto result = generator.Generate(parseResult, arguments);
 	
 		double elapsedTime = std::chrono::duration<double>(std::chrono::system_clock::now() - startTime).count();

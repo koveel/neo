@@ -31,6 +31,7 @@
     </ClInclude>
     <ClInclude Include="src\pch.h" />
     <ClInclude Include="src\codegen\CodegenUtils.h" />
+    <ClInclude Include="src\codegen\Enum.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">

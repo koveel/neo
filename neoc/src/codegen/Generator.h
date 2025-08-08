@@ -20,7 +20,9 @@ struct CompoundExpression;
 class Generator
 {
 public:
-	Generator();
+	Module& module;
+public:
+	Generator(Module& module);
 
 	// Instructions
 	static llvm::Value* EmitStore(llvm::Value* value, llvm::Value* ptr);
@@ -32,6 +34,7 @@ public:
 
 	static llvm::Value* EmitSubscript(BinaryExpression* expression);
 	static llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);
+	static llvm::Value* HandleMemberAccessExpression(BinaryExpression* expression);
 
 	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr);
 	static llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);

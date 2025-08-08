@@ -104,6 +104,7 @@
   <ItemGroup>
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
     <ClInclude Include="src\codegen\CodegenUtils.h" />
+    <ClInclude Include="src\codegen\Enum.h" />
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
     <ClInclude Include="src\Lexer.h" />

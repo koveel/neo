@@ -10,12 +10,14 @@
 #include "PlatformUtils.h"
 
 #include "CodegenUtils.h"
+#include "Enum.h"
 
 static std::unique_ptr<llvm::LLVMContext> s_Context;
 static std::unique_ptr<llvm::IRBuilder<>> s_Builder;
 static std::unique_ptr<llvm::Module> s_Module;
 
 static Scope* s_CurrentScope = nullptr;
+static Generator* s_Generator = nullptr;
 
 static struct
 {
@@ -167,6 +169,9 @@ llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 	case TypeTag::Float64:
 		return llvm::ConstantFP::get(*s_Context, llvm::APFloat((double)value));
 	}
+
+	ASSERT(false);
+	return nullptr;
 }
 
 llvm::Value* PrimaryExpression::Generate()
@@ -341,6 +346,11 @@ llvm::Value* Generator::EmitSubscript(BinaryExpression* binary)
 	return s_Builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
 }
 
+llvm::Value* EnumDefinitionExpression::Generate()
+{
+	return nullptr;
+}
+
 llvm::Value* VariableDefinitionExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -434,7 +444,9 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			return alloc;
 	}
 
+	initialVal = Generator::CastValueIfNecessary(initialVal, initializer->type, type, false, initializer.get());
 	s_Builder->CreateStore(initialVal, alloc);
+
 	return alloc;
 }
 
@@ -560,6 +572,38 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 
 	llvm::Value* memberPtr = s_Builder->CreateStructGEP(objectValue, (uint32_t)memberIndex);
 	return memberPtr;
+}
+
+static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
+{
+	ASSERT(rhs->nodeType == NodeType::VariableAccess);
+	auto* access = ToExpr<VariableAccessExpression>(rhs);
+
+	const std::string& memberName = access->name;
+	if (!target.members.count(memberName)) {
+		throw CompileError(rhs->sourceLine, "enum '{}' does not have member '{}'", target.name, memberName);
+	}
+
+	return target.members[memberName];
+}
+
+llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
+{
+	Module& module = s_Generator->module;
+
+	// Enum?
+	if (auto* leftVariable = ToExpr<VariableAccessExpression>(binary->left))
+	{
+		const std::string& lhsID = leftVariable->name;
+		if (module.DefinedEnums.count(lhsID))
+		{
+			Enumeration& enume = module.DefinedEnums[lhsID];
+			binary->type = enume.integralType;
+			return AccessEnumMember(enume, binary->right.get());
+		}
+	}
+
+	return Generator::EmitStructureMemberAccess(binary);
 }
 
 llvm::Value* VariableAccessExpression::Generate()
@@ -1174,35 +1218,91 @@ static llvm::Type* FindReturnTypeFromBlock(std::vector<std::unique_ptr<Expressio
 	return nullptr;
 }
 
-// todo: abstract?
-static void VisitFunctionDefinitions(ParseResult& result)
+static void VisitFunctionDefinition(FunctionDefinitionExpression* expr)
+{
+	FunctionPrototype& prototype = expr->prototype;
+	if (s_Module->getFunction(prototype.Name))
+		throw CompileError(expr->sourceLine, "redefinition of function '{}'", prototype.Name.c_str());
+
+	// Param types
+	std::vector<llvm::Type*> parameterTypes(prototype.Parameters.size());
+	uint32_t i = 0;
+	for (auto& param : prototype.Parameters)
+		parameterTypes[i++] = param->type->raw;
+	i = 0;
+
+	llvm::Type* retType = prototype.ReturnType->raw;
+	//llvm::Type* returnTypeFromBody = FindReturnTypeFromBlock(definition->body);
+	//retType = returnTypeFromBody;
+
+	llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
+	llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *s_Module);
+}
+
+static void VisitEnumDefinition(EnumDefinitionExpression* expr)
+{
+	Module& module = s_Generator->module;
+	ASSERT(!module.DefinedEnums.count(expr->name));
+
+	Enumeration& enumeration = module.DefinedEnums[expr->name];
+	enumeration.name = expr->name;
+
+	AliasType* alias = expr->type->IsAlias();
+	ASSERT(alias);
+	enumeration.integralType = alias->aliasedType;
+
+	uint64_t memberIndex = 0;
+	uint64_t memberValueTracker = 0; // what the next member's value will be
+	for (auto& member : expr->members)
+	{
+		// Must be either a variable definition or binary expression (variable = constant)
+		if (auto variable = ToExpr<VariableAccessExpression>(member))
+		{
+			const std::string& memberName = variable->name;
+
+			llvm::Value* value = value = Generator::GetNumericConstant(enumeration.integralType->tag, memberValueTracker++);
+			enumeration.members[memberName] = value;
+		}
+		else if (auto binary = ToExpr<BinaryExpression>(member))
+		{
+			VariableAccessExpression* variable = nullptr;
+			if (!(variable = ToExpr<VariableAccessExpression>(binary->left)))
+				throw CompileError(binary->sourceLine, "expected identifier for enum member {}", memberIndex);
+
+			const std::string& memberName = variable->name;
+			llvm::Value* value = binary->right->Generate();
+			value = Generator::CastValueIfNecessary(value, binary->right->type, enumeration.integralType, false, binary->right.get());
+
+			enumeration.members[memberName] = value;
+		}
+		else {
+			throw CompileError(expr->sourceLine, "invalid member {} for enum '{}'", memberIndex, expr->name);
+		}
+
+		memberIndex++;
+	}
+}
+
+// TODO: FIX AND ABSTRACT
+static void VisitTopLevelDefinitions()
 {
 	PROFILE_FUNCTION();
 
 	// only works for top level functions rn
-	for (auto& node : result.module.SyntaxTree->children)
+	for (auto& node : s_Generator->module.SyntaxTree->children)
 	{
-		FunctionDefinitionExpression* definition = nullptr;
-		if (!(definition = ToExpr<FunctionDefinitionExpression>(node)))
-			continue;
+		switch (node->nodeType) {
+		case NodeType::FunctionDefinition: {
+			VisitFunctionDefinition(ToExpr<FunctionDefinitionExpression>(node));
+			break;
+		}
+		case NodeType::EnumDefinition: {
+			VisitEnumDefinition(ToExpr<EnumDefinitionExpression>(node));
+			break;
+		}
+		}
 
-		FunctionPrototype& prototype = definition->prototype;
-		if (s_Module->getFunction(prototype.Name))
-			throw CompileError(node->sourceLine, "redefinition of function '{}'", prototype.Name.c_str());
-
-		// Param types
-		std::vector<llvm::Type*> parameterTypes(prototype.Parameters.size());
-		uint32_t i = 0;
-		for (auto& param : prototype.Parameters)
-			parameterTypes[i++] = param->type->raw;
-		i = 0;
-
-		llvm::Type* retType = prototype.ReturnType->raw;
-		//llvm::Type* returnTypeFromBody = FindReturnTypeFromBlock(definition->body);
-		//retType = returnTypeFromBody;
-
-		llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
-		llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *s_Module);
+		continue;
 	}
 }
 
@@ -1344,11 +1444,11 @@ static void InitPrimitiveCasts()
 	}
 }
 
-static void ResolveParsedTypes(ParseResult& result)
+static void ResolveParsedTypes()
 {
 	PROFILE_FUNCTION();
 
-	for (auto& expr : result.module.SyntaxTree->children)
+	for (auto& expr : s_Generator->module.SyntaxTree->children)
 		expr->ResolveType();
 
 	for (auto& pair : Type::RegisteredTypes)
@@ -1368,8 +1468,6 @@ static void ResolveParsedTypes(ParseResult& result)
 		Type* type = pair.second;
 		ResolveType(*type);
 	}
-
-	VisitFunctionDefinitions(result);
 }
 
 AliasType* IsTypeNameAnAlias(const std::string& name)
@@ -1487,8 +1585,11 @@ ArrayType* Type::GetArrayTypeOf(uint64_t count)
 //	modulePassManager.run(*s_Module, moduleAnalysisManager);
 //}
 
-Generator::Generator()
+Generator::Generator(Module& module)
+	: module(module)
 {
+	s_Generator = this;
+
 	s_Context = std::make_unique<llvm::LLVMContext>();
 	s_Module = std::make_unique<llvm::Module>(llvm::StringRef(), *s_Context);
 	s_Builder = std::make_unique<llvm::IRBuilder<>>(*s_Context);
@@ -1502,12 +1603,13 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 
 	try
 	{
-		ResolveParsedTypes(parseResult);
+		ResolveParsedTypes();
 		InitPrimitiveCasts();
+		VisitTopLevelDefinitions();
 
 		s_CurrentScope = new Scope();
 		// Codegen module
-		for (auto& node : parseResult.module.SyntaxTree->children)
+		for (auto& node : module.SyntaxTree->children)
 		{
 			node->Generate();
 		}

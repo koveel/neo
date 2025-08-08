@@ -51,6 +51,7 @@ enum class TokenType : char
 	Return,
 	Const,
 	Struct,
+	Enum,
 	Null,
 	Import,
 	For, Continue, Break,
