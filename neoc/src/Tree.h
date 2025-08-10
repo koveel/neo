@@ -37,13 +37,23 @@ struct Expression : public ASTNode
 	}
 };
 
+// simplifies things
+struct NullExpression : public Expression
+{
+	using Expression::Expression;
+
+	llvm::Value* Generate() override;
+	//llvm::Value* ResolveType() override {}
+};
+
 struct PrimaryExpression : public Expression
 {
 	union
 	{
 		int64_t i64 = 0;
 		uint64_t u64;
-		int64_t* ip64;
+		//int64_t* ip64;
+		bool null;
 		bool b32;
 		double f64;
 	} value;

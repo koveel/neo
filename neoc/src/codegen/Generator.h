@@ -36,6 +36,7 @@ public:
 	static llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);
 	static llvm::Value* HandleMemberAccessExpression(BinaryExpression* expression);
 
+	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, Expression* expr);
 	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr);
 	static llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
 

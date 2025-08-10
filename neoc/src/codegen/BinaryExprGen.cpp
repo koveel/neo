@@ -103,8 +103,11 @@ static llvm::CmpInst::Predicate LLVMCompareOpFromBinaryExpr(BinaryType operation
 	return {};
 }
 
-static void ResolveBinaryExpressionTypeDiscrepancy(std::pair<llvm::Value*&, Type*&> left, std::pair<llvm::Value*&, Type*&> right)
+static void ResolveBinaryExpressionTypeDiscrepancy(std::pair<llvm::Value*&, Type*&> left, std::pair<llvm::Value*&, Type*&> right,
+	BinaryExpression* binaryExpr)
 {
+	PROFILE_FUNCTION();
+
 	std::pair<llvm::Value*&, Type*&> exprs[2] = { left, right };
 
 	Type* lType = left.second;
@@ -117,7 +120,11 @@ static void ResolveBinaryExpressionTypeDiscrepancy(std::pair<llvm::Value*&, Type
 		uint32_t nonFP = lType->IsFloatingPoint() ? 1 : 0;
 		uint32_t fp = 1 - nonFP;
 
-		exprs[nonFP].first = Cast::IsValid(exprs[nonFP].second, exprs[fp].second)->Invoke(exprs[nonFP].first);
+		Cast* cast = Cast::IsValid(exprs[nonFP].second, exprs[fp].second);
+		if (!cast) {
+			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
+		}
+		exprs[nonFP].first = cast->Invoke(exprs[nonFP].first);
 		exprs[nonFP].second = exprs[fp].second;
 		return;
 	}
@@ -129,7 +136,11 @@ static void ResolveBinaryExpressionTypeDiscrepancy(std::pair<llvm::Value*&, Type
 		uint32_t nonSign = lType->IsSigned() ? 1 : 0;
 		uint32_t sign = 1 - nonSign;
 
-		exprs[nonSign].first = Cast::IsValid(exprs[nonSign].second, exprs[sign].second)->Invoke(exprs[nonSign].first);
+		Cast* cast = Cast::IsValid(exprs[nonSign].second, exprs[sign].second);
+		if (!cast) {
+			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
+		}
+		exprs[nonSign].first = cast->Invoke(exprs[nonSign].first);
 		exprs[nonSign].second = exprs[sign].second;
 		return;
 	}
@@ -161,7 +172,7 @@ llvm::Value* BinaryExpression::Generate()
 	::Type* rightType = right->type;
 	if (leftType != rightType)
 	{
-		ResolveBinaryExpressionTypeDiscrepancy({ lhs, leftType }, { rhs, rightType });
+		ResolveBinaryExpressionTypeDiscrepancy({ lhs, leftType }, { rhs, rightType }, this);
 		//rhs = Generator::CastValueIfNecessary(rhs, right->type, left->type, false, this);
 	}
 

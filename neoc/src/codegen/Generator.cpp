@@ -47,7 +47,7 @@ static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBin
 	return true;
 }
 
-llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
+llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
 {
 	PROFILE_FUNCTION();
 
@@ -65,7 +65,12 @@ llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, s
 	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
 
-	return s_Builder->CreateLoad(generated);
+	return EmitLoad(generated);
+}
+
+llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
+{
+	return LoadValueIfVariable(generated, expr.get());
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
@@ -90,7 +95,7 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	if (!isPointer || isString)
 		return value;
 
-	return s_Builder->CreateLoad(value);
+	return Generator::EmitLoad(value);
 }
 
 llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source)
@@ -114,7 +119,8 @@ llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* t
 
 llvm::Value* Generator::EmitStructGEP(llvm::Value* ptr, uint32_t memberIndex)
 {
-	return s_Builder->CreateStructGEP(ptr, memberIndex);
+	llvm::Type* type = ptr->getType();
+	return s_Builder->CreateStructGEP(type, ptr, memberIndex);
 }
 
 llvm::Value* Generator::EmitInBoundsGEP(llvm::Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
@@ -174,6 +180,11 @@ llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 	return nullptr;
 }
 
+llvm::Value* NullExpression::Generate()
+{
+	return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
+}
+
 llvm::Value* PrimaryExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -182,13 +193,6 @@ llvm::Value* PrimaryExpression::Generate()
 
 	switch (type->tag)
 	{
-	case TypeTag::Pointer:
-		ASSERT(!value.ip64); // ???
-		ASSERT(false); // kys
-		break;
-
-		// TODO: handle unsigned values properly (wrapping etc)
-
 	case TypeTag::UInt8:
 	case TypeTag::UInt16:
 	case TypeTag::UInt32:
@@ -218,7 +222,6 @@ llvm::Value* StringExpression::Generate()
 	stringExpr.reserve(value.length);
 	
 	// Scuffed
-	// TODO: unretard the string lexing
 	for (uint32_t i = 0; i < value.length; i++)
 	{
 		char c = value.start[i];
@@ -274,16 +277,16 @@ llvm::Value* UnaryExpression::Generate()
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = s_Builder->CreateLoad(value);
+		llvm::Value* loaded = Generator::EmitLoad(value);
 		s_Builder->CreateStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return newly incremented value
-		return s_Builder->CreateLoad(value);
+		return Generator::EmitLoad(value);
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = s_Builder->CreateLoad(value);
+		llvm::Value* loaded = Generator::EmitLoad(value);
 		s_Builder->CreateStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return value before increment
@@ -291,14 +294,14 @@ llvm::Value* UnaryExpression::Generate()
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = s_Builder->CreateLoad(value);
+		llvm::Value* loaded = Generator::EmitLoad(value);
 		s_Builder->CreateStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
-		return s_Builder->CreateLoad(value);
+		return Generator::EmitLoad(value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = s_Builder->CreateLoad(value);
+		llvm::Value* loaded = Generator::EmitLoad(value);
 		s_Builder->CreateStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		return loaded;
@@ -319,7 +322,7 @@ llvm::Value* UnaryExpression::Generate()
 				load = false;
 		}
 
-		return load ? s_Builder->CreateLoad(value) : value;
+		return load ? Generator::EmitLoad(value) : value;
 	}
 	}
 
@@ -401,7 +404,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 		if (!aggregateInitialization)
 		{
 			initialVal = initializer->Generate();
-			initialVal = LoadIfPointer(initialVal, initializer.get());
+			initialVal = Generator::LoadValueIfVariable(initialVal, initializer.get());
 
 			if (type)
 				initialVal = Generator::CastValueIfNecessary(initialVal, initializer->type, type, false, this);
@@ -530,7 +533,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 		// This is where u would have used -> instead of . (if I wanted that stupid feature)
 		if (objectType->IsPointer())
 		{
-			objectValue = s_Builder->CreateLoad(objectValue);
+			objectValue = EmitLoad(objectValue);
 			objectType = objectType->GetContainedType();
 		}
 		else
@@ -570,7 +573,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	if (memberIndex == -1)
 		throw CompileError(binary->sourceLine, "'{}' not a member of struct '{}'", memberExpr->name.c_str(), objectType->GetName().c_str());
 
-	llvm::Value* memberPtr = s_Builder->CreateStructGEP(objectValue, (uint32_t)memberIndex);
+	llvm::Value* memberPtr = s_Builder->CreateStructGEP(objectType->raw, objectValue, (uint32_t)memberIndex);
 	return memberPtr;
 }
 
@@ -623,7 +626,8 @@ llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
 
 llvm::Value* Generator::EmitLoad(llvm::Value* ptr)
 {
-	return s_Builder->CreateLoad(ptr);
+	llvm::Type* type = ptr->getType();
+	return s_Builder->CreateLoad(type, ptr);
 }
 
 llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
@@ -718,147 +722,6 @@ llvm::Value* BranchExpression::Generate()
 	return branchInst;
 }
 
-llvm::Value* LoopControlFlowExpression::Generate()
-{
-	// TODO
-
-	return nullptr;
-}
-
-llvm::Value* LoopExpression::Generate()
-{
-	PROFILE_FUNCTION();
-
-	llvm::Type* indexType = llvm::Type::getInt32Ty(*s_Context);
-	llvm::Type* arrayType = nullptr;
-	llvm::Value* arrayPtr = nullptr;
-
-	Type* iteratorType = range->type;
-	llvm::Value* indexValuePtr = s_Builder->CreateAlloca(indexType);
-	llvm::Value* maximumIndex = nullptr;
-	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
-
-	s_CurrentScope = s_CurrentScope->Deepen();
-
-	bool iteratingArray = false;
-	BinaryExpression* rangeOperand = nullptr;
-	if (!IsRange(range, &rangeOperand))
-	{
-		arrayPtr = range->Generate();
-		arrayType = arrayPtr->getType()->getContainedType(0);
-
-		if (!arrayType->isArrayTy())
-			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
-		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, arrayType->getArrayNumElements(), false));
-
-		iteratorType = range->type->GetContainedType();
-
-		// Init iterator
-		iteratorValuePtr = s_Builder->CreateAlloca(arrayType->getArrayElementType());
-
-		// gep
-		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-		llvm::Value* initialValue = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
-		initialValue = s_Builder->CreateLoad(initialValue);
-		s_Builder->CreateStore(initialValue, iteratorValuePtr);
-
-		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(32, 0, false));
-		s_Builder->CreateStore(zero, indexValuePtr);
-
-		iteratingArray = true;
-
-		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, iteratorValuePtr });
-	}
-	else
-	{
-		auto minimum = rangeOperand->left->Generate();
-		auto maximum = rangeOperand->right->Generate();
-
-		// If reading variable, treat it as underlying value so the compiler does compiler stuff.
-		minimum = Generator::LoadValueIfVariable(minimum, rangeOperand->left);
-		maximum = Generator::LoadValueIfVariable(maximum, rangeOperand->right);
-		maximumIndex = maximum;
-
-		iteratorType = rangeOperand->left->type;
-		s_Builder->CreateStore(minimum, indexValuePtr);
-
-		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
-	}
-
-	// Blocks
-	llvm::BasicBlock* parentBlock = s_Builder->GetInsertBlock();
-	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*s_Context, "for_end", s_CurrentFunction.llvmFunction, s_CurrentFunction.returnBlock);
-
-	llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(*s_Context, "for_cond", s_CurrentFunction.llvmFunction, endBlock);
-	llvm::BasicBlock* incrementBlock = llvm::BasicBlock::Create(*s_Context, "for_inc", s_CurrentFunction.llvmFunction, endBlock);
-	llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(*s_Context, "for_body", s_CurrentFunction.llvmFunction, endBlock);
-
-	// Condition block
-	//	If iterator < rangeMax: jump to body block, otherwise jump to end block
-	s_Builder->SetInsertPoint(conditionBlock);
-	{
-		llvm::Value* bShouldContinue = nullptr;
-
-		llvm::Value* iteratorVal = s_Builder->CreateLoad(indexValuePtr);
-		llvm::Type* iteratorType = iteratorVal->getType();
-
-		bShouldContinue = s_Builder->CreateICmpSLT(iteratorVal, maximumIndex);
-
-		// TODO: abstract
-		//switch (iteratorType->getTypeID())
-		//{
-		//	case llvm::Type::IntegerTyID:
-		//	{
-		//		bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximum);
-		//		break;
-		//	}
-		//	case llvm::Type::FloatTyID:
-		//	{
-		//		bShouldContinue = builder->CreateFCmpULE(iteratorVal, maximum);
-		//		break;
-		//	}
-		//}
-
-		s_Builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
-	}
-
-	// Increment block:
-	//	Increment iterator
-	//	Jump to condition block
-	s_Builder->SetInsertPoint(incrementBlock);
-	{
-		llvm::Value* iteratorVal = s_Builder->CreateLoad(indexValuePtr);
-		s_Builder->CreateStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
-		s_Builder->CreateBr(conditionBlock);
-	}
-
-	// Body block:
-	//	Body
-	//	Jump to increment block
-	s_Builder->SetInsertPoint(bodyBlock);
-	{
-		if (iteratingArray)
-		{
-			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-			llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, s_Builder->CreateLoad(indexValuePtr) });
-			s_Builder->CreateStore(s_Builder->CreateLoad(currentElementPtr), iteratorValuePtr);
-		}
-
-		for (auto& expr : body)
-			expr->Generate();
-
-		s_Builder->CreateBr(incrementBlock);
-	}
-	
-	s_Builder->SetInsertPoint(parentBlock);
-	s_Builder->CreateBr(conditionBlock);
-	s_Builder->SetInsertPoint(endBlock);
-
-	s_CurrentScope = s_CurrentScope->Increase();
-
-	return endBlock;
-}
-
 static inline bool s_GeneratedTerminatorForCurrentFunction = false;
 
 llvm::Value* FunctionDefinitionExpression::Generate()
@@ -925,7 +788,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		if (isVoid)
 			s_Builder->CreateRetVoid();
 		else
-			s_Builder->CreateRet(s_Builder->CreateLoad(s_CurrentFunction.returnValueAlloca));
+			s_Builder->CreateRet(Generator::EmitLoad(s_CurrentFunction.returnValueAlloca));
 	}
 
 	{
@@ -984,12 +847,12 @@ llvm::Value* ReturnStatement::Generate()
 			llvm::Value* structPtr = s_Builder->CreateAlloca(type->raw);
 			Generator::InitializeStructMembersAggregate(structPtr, structType, compound);
 
-			returnValue = s_Builder->CreateLoad(structPtr);
+			returnValue = Generator::EmitLoad(structPtr);
 		}
 		if (ArrayType* arrayType = type->IsArray())
 		{
 			llvm::Value* arrayPtr = Generator::CreateArrayAlloca(arrayType->raw, compound->children);
-			returnValue = s_Builder->CreateLoad(arrayPtr);
+			returnValue = Generator::EmitLoad(arrayPtr);
 		}
 
 		ASSERT(returnValue);
@@ -1102,7 +965,7 @@ static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 	}
 	case TypeTag::String:
 	{
-		type.raw = llvm::Type::getInt8PtrTy(*s_Context);
+		type.raw = llvm::PointerType::get(llvm::Type::getInt8Ty(*s_Context), 0u);
 		return;
 	}
 	case TypeTag::Void:
@@ -1198,7 +1061,6 @@ static void ResolveType(Type& type, int line)
 	}
 }
 
-// todo: store ref to returns in the ast node?
 static llvm::Type* FindReturnTypeFromBlock(std::vector<std::unique_ptr<Expression>>& block)
 {
 	for (auto& expr : block)
@@ -1243,6 +1105,7 @@ static void VisitEnumDefinition(EnumDefinitionExpression* expr)
 {
 	Module& module = s_Generator->module;
 	ASSERT(!module.DefinedEnums.count(expr->name));
+	
 
 	Enumeration& enumeration = module.DefinedEnums[expr->name];
 	enumeration.name = expr->name;
@@ -1251,13 +1114,16 @@ static void VisitEnumDefinition(EnumDefinitionExpression* expr)
 	ASSERT(alias);
 	enumeration.integralType = alias->aliasedType;
 
+	bool hasUsedDeducedValue = false;
 	uint64_t memberIndex = 0;
-	uint64_t memberValueTracker = 0; // what the next member's value will be
+	uint64_t memberValueTracker = 0; // idkf
 	for (auto& member : expr->members)
 	{
-		// Must be either a variable definition or binary expression (variable = constant)
+		// Must be either a variable expr or binary expression (variable = constant)
 		if (auto variable = ToExpr<VariableAccessExpression>(member))
 		{
+			hasUsedDeducedValue = true;
+
 			const std::string& memberName = variable->name;
 
 			llvm::Value* value = value = Generator::GetNumericConstant(enumeration.integralType->tag, memberValueTracker++);
@@ -1265,6 +1131,9 @@ static void VisitEnumDefinition(EnumDefinitionExpression* expr)
 		}
 		else if (auto binary = ToExpr<BinaryExpression>(member))
 		{
+			if (hasUsedDeducedValue)
+				throw CompileError(binary->sourceLine, "within an enum, explicitly assigning values is only allowed before all deduced ones");
+
 			VariableAccessExpression* variable = nullptr;
 			if (!(variable = ToExpr<VariableAccessExpression>(binary->left)))
 				throw CompileError(binary->sourceLine, "expected identifier for enum member {}", memberIndex);
@@ -1288,7 +1157,6 @@ static void VisitTopLevelDefinitions()
 {
 	PROFILE_FUNCTION();
 
-	// only works for top level functions rn
 	for (auto& node : s_Generator->module.SyntaxTree->children)
 	{
 		switch (node->nodeType) {
@@ -1671,4 +1539,126 @@ bool Generator::ScopeValue(const std::string& name, const Value& value)
 	s_CurrentScope->AddValue(name, value);
 
 	return true;
+}
+
+
+
+
+llvm::Value* LoopExpression::Generate()
+{
+	PROFILE_FUNCTION();
+
+	llvm::Type* indexType = llvm::Type::getInt32Ty(*s_Context);
+	llvm::Type* arrayType = nullptr;
+	llvm::Value* arrayPtr = nullptr;
+
+	Type* iteratorType = range->type;
+	llvm::Value* indexValuePtr = s_Builder->CreateAlloca(indexType);
+	llvm::Value* maximumIndex = nullptr;
+	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
+
+	s_CurrentScope = s_CurrentScope->Deepen();
+
+	bool iteratingArray = false;
+	BinaryExpression* rangeOperand = nullptr;
+	if (!IsRange(range, &rangeOperand))
+	{
+		arrayPtr = range->Generate();
+		arrayType = arrayPtr->getType()->getContainedType(0);
+
+		if (!arrayType->isArrayTy())
+			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
+		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, arrayType->getArrayNumElements(), false));
+
+		iteratorType = range->type->GetContainedType();
+
+		// Init iterator
+		iteratorValuePtr = s_Builder->CreateAlloca(arrayType->getArrayElementType());
+
+		// gep
+		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
+		llvm::Value* initialValue = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
+		initialValue = Generator::EmitLoad(initialValue);
+		s_Builder->CreateStore(initialValue, iteratorValuePtr);
+
+		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(32, 0, false));
+		s_Builder->CreateStore(zero, indexValuePtr);
+
+		iteratingArray = true;
+
+		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, iteratorValuePtr });
+	}
+	else
+	{
+		auto minimum = rangeOperand->left->Generate();
+		auto maximum = rangeOperand->right->Generate();
+
+		// If reading variable, treat it as underlying value so the compiler does compiler stuff.
+		minimum = Generator::LoadValueIfVariable(minimum, rangeOperand->left);
+		maximum = Generator::LoadValueIfVariable(maximum, rangeOperand->right);
+		maximumIndex = maximum;
+
+		iteratorType = rangeOperand->left->type;
+		s_Builder->CreateStore(minimum, indexValuePtr);
+
+		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
+	}
+
+	// Blocks
+	llvm::BasicBlock* parentBlock = s_Builder->GetInsertBlock();
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*s_Context, "for_end", s_CurrentFunction.llvmFunction, s_CurrentFunction.returnBlock);
+
+	llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(*s_Context, "for_cond", s_CurrentFunction.llvmFunction, endBlock);
+	llvm::BasicBlock* incrementBlock = llvm::BasicBlock::Create(*s_Context, "for_inc", s_CurrentFunction.llvmFunction, endBlock);
+	llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(*s_Context, "for_body", s_CurrentFunction.llvmFunction, endBlock);
+
+	// Condition block
+	//	If iterator < rangeMax: jump to body block, otherwise jump to end block
+	s_Builder->SetInsertPoint(conditionBlock);
+	{
+		llvm::Value* bShouldContinue = nullptr;
+
+		llvm::Value* iteratorVal = Generator::EmitLoad(indexValuePtr);
+		llvm::Type* iteratorType = iteratorVal->getType();
+
+		bShouldContinue = s_Builder->CreateICmpSLT(iteratorVal, maximumIndex);
+
+		s_Builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
+	}
+
+	// Increment block:
+	//	Increment iterator
+	//	Jump to condition block
+	s_Builder->SetInsertPoint(incrementBlock);
+	{
+		llvm::Value* iteratorVal = Generator::EmitLoad(indexValuePtr);
+		s_Builder->CreateStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
+		s_Builder->CreateBr(conditionBlock);
+	}
+
+	// Body block:
+	//	Body
+	//	Jump to increment block
+	s_Builder->SetInsertPoint(bodyBlock);
+	{
+		if (iteratingArray)
+		{
+			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
+			llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(indexValuePtr) });
+			s_Builder->CreateStore(Generator::EmitLoad(currentElementPtr), iteratorValuePtr);
+		}
+
+		for (auto& expr : body)
+			expr->Generate();
+
+		s_Builder->CreateBr(incrementBlock);
+	}
+
+	s_Builder->SetInsertPoint(parentBlock);
+	s_Builder->CreateBr(conditionBlock);
+	s_Builder->SetInsertPoint(endBlock);
+
+	s_CurrentScope = s_CurrentScope->Increase();
+
+	return endBlock;
 }

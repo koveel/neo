@@ -1,5 +1,3 @@
-#pragma once
-
 #include "Lexer.h"
 #include "Module.h"
 

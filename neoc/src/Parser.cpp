@@ -475,10 +475,9 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 	{
 		case TokenType::Null:
 		{
-			auto primary = MakeExpression<PrimaryExpression>();
-			primary->value.ip64 = nullptr;
-			primary->type = Type::Get(TypeTag::Pointer);
-			return primary;
+			auto null = MakeExpression<NullExpression>();
+			Advance();
+			return null;
 		}
 		case TokenType::Return:
 		{
@@ -1001,6 +1000,8 @@ static std::unique_ptr<Expression> ParseLoopControlFlow()
 		expr->controlType = LoopControlFlowType::Break;
 	else if (token.type == TokenType::Continue)
 		expr->controlType = LoopControlFlowType::Continue;
+
+	Advance();
 
 	return expr;
 }

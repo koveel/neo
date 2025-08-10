@@ -26,12 +26,16 @@
     <ClInclude Include="src\codegen\Cast.h">
       <Filter>codegen</Filter>
     </ClInclude>
+    <ClInclude Include="src\codegen\CodegenUtils.h">
+      <Filter>codegen</Filter>
+    </ClInclude>
+    <ClInclude Include="src\codegen\Enum.h">
+      <Filter>codegen</Filter>
+    </ClInclude>
     <ClInclude Include="src\codegen\Generator.h">
       <Filter>codegen</Filter>
     </ClInclude>
     <ClInclude Include="src\pch.h" />
-    <ClInclude Include="src\codegen\CodegenUtils.h" />
-    <ClInclude Include="src\codegen\Enum.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">
@@ -49,6 +53,9 @@
     <ClCompile Include="src\TreeTypeResolve.cpp" />
     <ClCompile Include="src\Type.cpp" />
     <ClCompile Include="src\Utils.cpp" />
+    <ClCompile Include="src\codegen\ArrayExprGen.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
     <ClCompile Include="src\codegen\BinaryExprGen.cpp">
       <Filter>codegen</Filter>
     </ClCompile>
@@ -58,8 +65,12 @@
     <ClCompile Include="src\codegen\Generator.cpp">
       <Filter>codegen</Filter>
     </ClCompile>
+    <ClCompile Include="src\codegen\LoopExprGen.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
+    <ClCompile Include="src\codegen\StructExprGen.cpp">
+      <Filter>codegen</Filter>
+    </ClCompile>
     <ClCompile Include="src\pch.cpp" />
-    <ClCompile Include="src\codegen\StructExprGen.cpp" />
-    <ClCompile Include="src\codegen\ArrayExprGen.cpp" />
   </ItemGroup>
 </Project>

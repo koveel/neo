@@ -60,7 +60,7 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NEOC_DEBUG;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\llvm-project\llvm\include;..\..\llvm-project\build\include;src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;C:\Program Files\llvm-project\llvm\include;C:\Program Files\llvm-project\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <DebugInformationFormat>EditAndContinue</DebugInformationFormat>
       <Optimization>Disabled</Optimization>
       <MinimalRebuild>false</MinimalRebuild>
@@ -72,8 +72,8 @@
     <Link>
       <SubSystem>Console</SubSystem>
       <GenerateDebugInformation>true</GenerateDebugInformation>
-      <AdditionalDependencies>..\..\llvm-project\build\Debug\lib\**.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\llvm-project\build\Debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>Ws2_32.lib;C:\Program Files\llvm-project\build\Debug\lib\**.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files\llvm-project\build\Debug\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemDefinitionGroup Condition="'$(Configuration)|$(Platform)'=='Release|x64'">
@@ -82,7 +82,7 @@
       <PrecompiledHeaderFile>pch.h</PrecompiledHeaderFile>
       <WarningLevel>Level3</WarningLevel>
       <PreprocessorDefinitions>_CRT_SECURE_NO_WARNINGS;NEOC_RELEASE;%(PreprocessorDefinitions)</PreprocessorDefinitions>
-      <AdditionalIncludeDirectories>..\..\llvm-project\llvm\include;..\..\llvm-project\build\include;src;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
+      <AdditionalIncludeDirectories>src;C:\Program Files\llvm-project\llvm\include;C:\Program Files\llvm-project\build\include;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
       <Optimization>Full</Optimization>
       <FunctionLevelLinking>true</FunctionLevelLinking>
       <IntrinsicFunctions>true</IntrinsicFunctions>
@@ -97,14 +97,12 @@
       <SubSystem>Console</SubSystem>
       <EnableCOMDATFolding>true</EnableCOMDATFolding>
       <OptimizeReferences>true</OptimizeReferences>
-      <AdditionalDependencies>..\..\llvm-project\build\Release\lib\**.lib;%(AdditionalDependencies)</AdditionalDependencies>
-      <AdditionalLibraryDirectories>..\..\llvm-project\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
+      <AdditionalDependencies>Ws2_32.lib;C:\Program Files\llvm-project\build\Release\lib\**.lib;%(AdditionalDependencies)</AdditionalDependencies>
+      <AdditionalLibraryDirectories>C:\Program Files\llvm-project\build\Release\lib;%(AdditionalLibraryDirectories)</AdditionalLibraryDirectories>
     </Link>
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
-    <ClInclude Include="src\codegen\CodegenUtils.h" />
-    <ClInclude Include="src\codegen\Enum.h" />
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
     <ClInclude Include="src\Lexer.h" />
@@ -117,14 +115,14 @@
     <ClInclude Include="src\Type.h" />
     <ClInclude Include="src\Utils.h" />
     <ClInclude Include="src\codegen\Cast.h" />
+    <ClInclude Include="src\codegen\CodegenUtils.h" />
+    <ClInclude Include="src\codegen\Enum.h" />
     <ClInclude Include="src\codegen\Generator.h" />
     <ClInclude Include="src\pch.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp" />
     <ClCompile Include="src\CmdLine\Main.cpp" />
-    <ClCompile Include="src\codegen\ArrayExprGen.cpp" />
-    <ClCompile Include="src\codegen\StructExprGen.cpp" />
     <ClCompile Include="src\Emitter.cpp" />
     <ClCompile Include="src\Error.cpp" />
     <ClCompile Include="src\Lexer.cpp" />
@@ -134,9 +132,12 @@
     <ClCompile Include="src\TreeTypeResolve.cpp" />
     <ClCompile Include="src\Type.cpp" />
     <ClCompile Include="src\Utils.cpp" />
+    <ClCompile Include="src\codegen\ArrayExprGen.cpp" />
     <ClCompile Include="src\codegen\BinaryExprGen.cpp" />
     <ClCompile Include="src\codegen\Cast.cpp" />
     <ClCompile Include="src\codegen\Generator.cpp" />
+    <ClCompile Include="src\codegen\LoopExprGen.cpp" />
+    <ClCompile Include="src\codegen\StructExprGen.cpp" />
     <ClCompile Include="src\pch.cpp">
       <PrecompiledHeader>Create</PrecompiledHeader>
     </ClCompile>
