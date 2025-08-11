@@ -1,0 +1,14 @@
+printf :: (msg: string);
+
+sum :: (a, b: i32) -> i32 { return a + b; }
+
+main :: () -> i32
+{
+    text := "Hello, World!";
+
+    for i: 0..100 {
+        printf(text);
+    }
+
+    return sum(10, 5);
+}

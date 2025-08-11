@@ -3,6 +3,7 @@
 #include "Type.h"
 
 std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
+std::unordered_map<llvm::Type*, Type*> Type::LLVMToNeoTypes;
 std::unordered_map<std::string, AliasType*> AliasType::RegisteredTypes;
 std::unordered_map<std::string, StructType*> StructType::RegisteredTypes;
 std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
@@ -93,6 +94,13 @@ Type* Type::Get(const std::string& name, Type* contained)
 	TypeTag tag = TagFromString(name.c_str());
 
 	return tag != TypeTag::Unresolved ? Get(tag, contained) : StructType::Get(name);
+}
+
+Type* Type::FromLLVM(llvm::Type* raw)
+{
+	ASSERT(LLVMToNeoTypes.count(raw));
+
+	return LLVMToNeoTypes[raw];
 }
 
 AliasType* AliasType::Get(Type* aliasFor, const std::string& name)

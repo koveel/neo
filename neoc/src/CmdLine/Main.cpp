@@ -57,7 +57,7 @@ int main(int argc, const char* argv[])
 	
 	std::string mainPath = arguments.path;
 #else
-	const char* argV[] = { "neoc", "C:/Users/edwar/Desktop/syntax_test/main.neo", "-br" };
+	const char* argV[] = { "neoc", "C:/dev/neo/neoc/main.neo", "-br" };
 	uint32_t argC = std::size(argV);
 
 	std::string cmdParseError;
@@ -109,8 +109,6 @@ int main(int argc, const char* argv[])
 			LaunchProcess(command.c_str());
 		}
 	}
-
-	//std::cin.get();
 
 	PROFILE_END_SESSION();
 }

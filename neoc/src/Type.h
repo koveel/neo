@@ -103,6 +103,8 @@ public:
 	static Type* Get(TypeTag tag, Type* contained = nullptr);
 	static Type* Get(const std::string& name, Type* contained = nullptr);
 
+	static Type* FromLLVM(llvm::Type* raw);
+
 	static std::string TagToString(TypeTag tag, Type* type = nullptr);
 public:
 	TypeTag tag = TypeTag::Unresolved;
@@ -110,6 +112,7 @@ public:
 	llvm::Type* raw = nullptr;
 public:
 	static std::unordered_map<Key, Type*> RegisteredTypes;
+	static std::unordered_map<llvm::Type*, Type*> LLVMToNeoTypes; // hash map = 100x programmer
 };
 
 class AliasType : public Type

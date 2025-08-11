@@ -34,7 +34,7 @@ llvm::Value* Generator::CreateArrayAlloca(llvm::Type* arrayType, const std::vect
 	{
 		llvm::Value* index = Generator::GetNumericConstant(TypeTag::Int32, i);
 		if (isArrayOfStructs)
-			value = Generator::EmitLoad(value);
+			value = Generator::EmitLoad(arrayType->getContainedType(0), value);
 
 		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType, alloc, { zeroIndex, index }));
 

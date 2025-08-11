@@ -26,7 +26,7 @@ public:
 
 	// Instructions
 	static llvm::Value* EmitStore(llvm::Value* value, llvm::Value* ptr);
-	static llvm::Value* EmitLoad(llvm::Value* ptr);
+	static llvm::Value* EmitLoad(llvm::Type* resultType, llvm::Value* ptr);
 	static llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 	static llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 

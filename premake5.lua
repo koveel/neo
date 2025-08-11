@@ -14,7 +14,7 @@ workspace "Neo"
 	}
 
 outputdir = "%{cfg.buildcfg}"
-llvm_path = "C:/Program Files/llvm-project"
+llvm_path = "C:/dev/llvm-project"
 
 project "neoc"
 	location "neoc"
