@@ -144,9 +144,9 @@ llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* struc
 	return s_Builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
 }
 
-llvm::Value* Generator::EmitInBoundsGEP(llvm::Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
+llvm::Value* Generator::EmitInBoundsGEP(Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
 {
-	return s_Builder->CreateInBoundsGEP(type, ptr, indices);
+	return s_Builder->CreateInBoundsGEP(type->raw, ptr, indices);
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -203,7 +203,7 @@ llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 
 llvm::Value* NullExpression::Generate()
 {
-	return llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
+	return llvm::ConstantPointerNull::get(llvm::PointerType::get(*s_Context, 0u));
 }
 
 llvm::Value* PrimaryExpression::Generate()
@@ -434,7 +434,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	}
 
 	// Alloc
-	llvm::Value* alloc = Generator::EmitAlloca(type->raw);
+	llvm::Value* alloc = Generator::EmitAlloca(type);
 	s_CurrentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
@@ -580,10 +580,6 @@ llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
 
 llvm::Value* Generator::EmitLoad(Type* result, llvm::Value* ptr)
 {
-	// Make sure we always have all our juicy type data
-	//Type* neoType = Type::FromLLVM(result);
-	//ResolveType(*neoType);
-
 	return s_Builder->CreateLoad(result->raw, ptr);
 }
 
@@ -597,13 +593,9 @@ llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, ll
 	return s_Builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
 }
 
-llvm::Value* Generator::EmitAlloca(llvm::Type* rawType, llvm::Value* arraySize)
+llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize)
 {
-	// Make sure we always have all our juicy type data
-	Type* neoType = Type::FromLLVM(rawType)->GetPointerTo();
-	ResolveType(*neoType);
-
-	return s_Builder->CreateAlloca(rawType, arraySize);
+	return s_Builder->CreateAlloca(type->raw, arraySize);
 }
 
 llvm::Value* ConstantDefinitionExpression::Generate()
@@ -619,7 +611,7 @@ llvm::Value* CompoundExpression::Generate()
 			//	// The type wasn't resolved
 			//}
 
-			llvm::Value* structPtr = Generator::EmitAlloca(structType->raw);
+			llvm::Value* structPtr = Generator::EmitAlloca(structType);
 			Generator::InitializeStructMembersAggregate(structPtr, structType, this);
 			return structPtr;
 		}
@@ -709,7 +701,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 		// Allocate return value
 		if (!isVoid)
-			s_CurrentFunction.returnValueAlloca = Generator::EmitAlloca(s_CurrentFunction.llvmFunction->getReturnType());
+			s_CurrentFunction.returnValueAlloca = Generator::EmitAlloca(type);
 
 		s_CurrentFunction.returnBlock = llvm::BasicBlock::Create(*s_Context, "exit", s_CurrentFunction.llvmFunction);
 	}
@@ -725,7 +717,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 			continue;
 
 		// Alloc arg
-		llvm::Value* alloc = Generator::EmitAlloca(arg.getType());
+		llvm::Value* alloc = Generator::EmitAlloca(parameter->type);
 		Generator::EmitStore(&arg, alloc);
 		s_CurrentScope->AddValue(parameter->name, { parameter->type, alloc });
 	}
@@ -809,7 +801,7 @@ llvm::Value* ReturnStatement::Generate()
 	{
 		if (StructType* structType = type->IsStruct())
 		{
-			llvm::Value* structPtr = Generator::EmitAlloca(type->raw);
+			llvm::Value* structPtr = Generator::EmitAlloca(type);
 			Generator::InitializeStructMembersAggregate(structPtr, structType, compound);
 
 			returnValue = Generator::EmitLoad(type, structPtr);
@@ -1519,8 +1511,9 @@ llvm::Value* LoopExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	llvm::Type* indexType = llvm::Type::getInt32Ty(*s_Context);
-	llvm::Type* arrayType = nullptr;
+	Type* indexType = Type::Get(TypeTag::Int32);
+
+	ArrayType* arrayType = nullptr;
 	llvm::Value* arrayPtr = nullptr;
 
 	Type* iteratorType = range->type;
@@ -1535,24 +1528,30 @@ llvm::Value* LoopExpression::Generate()
 	if (!IsRange(range, &rangeOperand))
 	{
 		arrayPtr = range->Generate();
-		//arrayType = arrayPtr->getType()->getContainedType(0);
+		bool isAlloca = llvm::isa<llvm::AllocaInst>(arrayPtr);
+		ASSERT(isAlloca);
 
-		if (!arrayType->isArrayTy())
-			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
-		maximumIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, arrayType->getArrayNumElements(), false));
+		llvm::AllocaInst* alloc = llvm::cast<llvm::AllocaInst>(arrayPtr);
+		llvm::Type* llvmArrayType = alloc->getAllocatedType();
+		ASSERT(llvmArrayType->isArrayTy());
+		arrayType = Type::FromLLVM(llvmArrayType)->IsArray();
+		ASSERT(arrayType);
 
-		iteratorType = range->type->GetContainedType();
+		//if (!arrayType->isArrayTy())
+		//	throw CompileError(range->sourceLine, "expected an object of array type to iterate");
+		maximumIndex = Generator::GetNumericConstant(TypeTag::Int32, arrayType->count);
 
 		// Init iterator
-		iteratorValuePtr = Generator::EmitAlloca(arrayType->getArrayElementType());
+		iteratorType = arrayType->contained;
+		iteratorValuePtr = Generator::EmitAlloca(iteratorType);
 
 		// gep
 		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-		llvm::Value* initialValue = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
-		//initialValue = Generator::EmitLoad(arrayType, initialValue);
+		llvm::Value* initialValue = Generator::EmitInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
+		initialValue = Generator::EmitLoad(arrayType->contained, initialValue);
 		Generator::EmitStore(initialValue, iteratorValuePtr);
 
-		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(32, 0, false));
+		llvm::Value* zero = Generator::GetNumericConstant(TypeTag::Int32, 0);
 		Generator::EmitStore(zero, indexValuePtr);
 
 		iteratingArray = true;
@@ -1589,8 +1588,7 @@ llvm::Value* LoopExpression::Generate()
 	{
 		llvm::Value* bShouldContinue = nullptr;
 
-		//llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
-		llvm::Value* iteratorVal = Generator::EmitLoad(nullptr, indexValuePtr);
+		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
 		llvm::Type* iteratorType = iteratorVal->getType();
 
 		bShouldContinue = s_Builder->CreateICmpSLT(iteratorVal, maximumIndex);
@@ -1603,8 +1601,7 @@ llvm::Value* LoopExpression::Generate()
 	//	Jump to condition block
 	s_Builder->SetInsertPoint(incrementBlock);
 	{
-		//llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
-		llvm::Value* iteratorVal = Generator::EmitLoad(nullptr, indexValuePtr);
+		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
 		Generator::EmitStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
 		s_Builder->CreateBr(conditionBlock);
 	}
@@ -1617,10 +1614,9 @@ llvm::Value* LoopExpression::Generate()
 		if (iteratingArray)
 		{
 			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-			//llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(indexType, indexValuePtr) });
-			llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(nullptr, indexValuePtr) });
-			//Generator::EmitStore(Generator::EmitLoad(arrayType->getContainedType(0), currentElementPtr), iteratorValuePtr);
-			Generator::EmitStore(Generator::EmitLoad(nullptr, currentElementPtr), iteratorValuePtr);
+			llvm::Value* currentElementPtr = Generator::EmitInBoundsGEP(arrayType, arrayPtr, 
+				{ zeroIndex, Generator::EmitLoad(indexType, indexValuePtr) });
+			Generator::EmitStore(Generator::EmitLoad(arrayType->contained, currentElementPtr), iteratorValuePtr);
 		}
 
 		for (auto& expr : body)

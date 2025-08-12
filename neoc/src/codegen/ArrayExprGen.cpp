@@ -24,7 +24,7 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 		values.push_back(element);
 	}
 
-	llvm::Value* alloc = Generator::EmitAlloca(arrayType->raw);
+	llvm::Value* alloc = Generator::EmitAlloca(arrayType);
 	StructType* containedStructType = arrayType->contained->IsStruct();
 
 	// initialize elements (store into gep)
@@ -36,7 +36,7 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 		if (containedStructType)
 			value = Generator::EmitLoad(containedStructType, value);
 
-		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType->raw, alloc, { zeroIndex, index }));
+		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType, alloc, { zeroIndex, index }));
 
 		i++;
 	}
@@ -54,9 +54,8 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 	}
 	else
 	{
-		llvm::Type* arrayTy = llvm::ArrayType::get(type->raw, capacity);
-		type->raw = arrayTy;
-		value = Generator::EmitAlloca(arrayTy);
+		type = ArrayType::Get(type, capacity);
+		value = Generator::EmitAlloca(type);
 	}
 
 	Generator::ScopeValue(variableDef->name, { type, value });

@@ -30,7 +30,7 @@ public:
 	static llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 	static llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 
-	static llvm::Value* EmitAlloca(llvm::Type* type, llvm::Value* arraySize = nullptr);
+	static llvm::Value* EmitAlloca(Type* type, llvm::Value* arraySize = nullptr);
 
 	static llvm::Value* EmitSubscript(BinaryExpression* expression);
 	static llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);
@@ -41,7 +41,7 @@ public:
 	static llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
 
 	static llvm::Value* EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex);
-	static llvm::Value* EmitInBoundsGEP(llvm::Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
+	static llvm::Value* EmitInBoundsGEP(Type* arrayType, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
 
 	static llvm::Value* GetNumericConstant(TypeTag tag, int64_t value);
 

@@ -1,17 +1,23 @@
 printf :: (msg: string);
 
-Player :: struct
-{
-    name: string;
+get_messages :: () -> [5]string {
+    return [] {
+        "One",
+        "Two",
+        "Three",
+        "Four",
+        "Five",
+    };
 }
 
 main :: () -> i32
 {
-    p := Player {
-        "sonic the hedgehog\n"
-    };
+    messages := get_messages();
 
-    printf(p.name);
-    printf("Hello, World!");
+    for msg: messages {
+        printf(msg);
+        printf("\n");
+    }
+
     return 0;
 }
