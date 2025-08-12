@@ -1,22 +1,36 @@
 printf :: (msg: string);
 
-get_messages :: () -> [5]string {
-    return [] {
-        "One",
-        "Two",
-        "Three",
-        "Four",
-        "Five",
-    };
+Food :: enum
+{
+    Apple,
+    Banana,
+    Bread,
+    Cake,
+}
+
+Tag :: struct
+{
+    name: string;
+    var: i32;
+}
+
+Player :: struct
+{
+    age := 0;
+    tag: Tag;
 }
 
 main :: () -> i32
 {
-    messages := get_messages();
-
-    for msg: messages {
-        printf(msg);
-        printf("\n");
+    player := Player {
+        18,
+        Tag {
+            "Player 1",
+            5,
+        }
+    };
+    for i: 0..player.tag.var {
+        printf("loop\n");
     }
 
     return 0;

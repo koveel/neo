@@ -157,8 +157,9 @@ static int GetBinaryPriority(BinaryOperation operation)
 	{
 		case BinaryType::Subscript:
 		case BinaryType::MemberAccess:
-		case BinaryType::Range:
 			return 100;
+			//case BinaryType::Range:
+			//	return 99;
 		case BinaryType::Divide:
 		case BinaryType::Multiply:
 		case BinaryType::Modulo:
@@ -189,6 +190,8 @@ static int GetBinaryPriority(BinaryOperation operation)
 			return 89;
 		case BinaryType::Assign:
 			return 88;
+		case BinaryType::Range:
+			return 87;
 	}
 
 	return 0;
@@ -233,7 +236,9 @@ static std::unique_ptr<Expression> ParseExpression(int priority)
 		BinaryOperation operation = GetBinaryOperationFromToken(token.type);
 		int newPriority = GetBinaryPriority(operation);
 
-		bool done = operation.type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority; // tf
+		// right-most member access needs to take precedence over all lhs member access
+		// prob a better way to do this
+		bool done = operation.type == BinaryType::MemberAccess ? newPriority <= priority : newPriority < priority;
 		if (newPriority == 0 || done)
 			return left;		
 		

@@ -980,8 +980,6 @@ static AliasType* IsTypeNameAnAlias(const std::string& name);
 
 static void ResolveType(Type& type, int line)
 {
-	std::string typeName = type.GetName();
-
 	bool isNamedType = type.tag == TypeTag::Struct || type.tag == TypeTag::Alias;
 	AliasType* alias = nullptr;
 	if (isNamedType && (alias = type.IsAlias()))
@@ -1019,7 +1017,9 @@ static void ResolveType(Type& type, int line)
 	}
 	}
 
-	Type::LLVMToNeoTypes[type.raw] = &type;
+	// LLVM's opaque pointer types dont do us much favors
+	if (!type.IsPointer())
+		Type::LLVMToNeoTypes[type.raw] = &type;
 }
 
 static llvm::Type* FindReturnTypeFromBlock(std::vector<std::unique_ptr<Expression>>& block)
@@ -1506,7 +1506,6 @@ bool Generator::ScopeValue(const std::string& name, const Value& value)
 	return true;
 }
 
-
 llvm::Value* LoopExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -1528,7 +1527,7 @@ llvm::Value* LoopExpression::Generate()
 	if (!IsRange(range, &rangeOperand))
 	{
 		arrayPtr = range->Generate();
-		bool isAlloca = llvm::isa<llvm::AllocaInst>(arrayPtr);
+		bool isAlloca = llvm::isa<llvm::AllocaInst>(arrayPtr); // Not sure if this will always be true
 		ASSERT(isAlloca);
 
 		llvm::AllocaInst* alloc = llvm::cast<llvm::AllocaInst>(arrayPtr);
