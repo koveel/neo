@@ -1,14 +1,17 @@
 printf :: (msg: string);
 
-sum :: (a, b: i32) -> i32 { return a + b; }
+Player :: struct
+{
+    name: string;
+}
 
 main :: () -> i32
 {
-    text := "Hello, World!";
+    p := Player {
+        "sonic the hedgehog\n"
+    };
 
-    for i: 0..100 {
-        printf(text);
-    }
-
-    return sum(10, 5);
+    printf(p.name);
+    printf("Hello, World!");
+    return 0;
 }

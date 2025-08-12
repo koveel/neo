@@ -25,7 +25,7 @@ void Generator::InitializeStructMembersToDefault(llvm::Value* structPtr, StructT
 			initialValue = init->Generate();
 		}
 
-		llvm::Value* memberPtr = Generator::EmitStructGEP(structPtr, i++);
+		llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, i++);
 		Generator::EmitStore(initialValue, memberPtr);
 	}
 }
@@ -78,7 +78,7 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 			initializedMembers.push_back(memberIndex);
 
 			llvm::Value* value = Generator::LoadValueIfVariable(binary->right->Generate(), binary->right);
-			llvm::Value* memberPtr = Generator::EmitStructGEP(structPtr, memberIndex);
+			llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, memberIndex);
 
 			value = Generator::CastValueIfNecessary(value, binary->right->type, type->members[memberIndex], false, binary->right.get());
 
@@ -95,7 +95,7 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 			uint32_t memberIndex = i++;
 
 			value = Generator::CastValueIfNecessary(value, expr->type, type->members[memberIndex], false, expr.get());
-			llvm::Value* memberPtr = Generator::EmitStructGEP(structPtr, memberIndex);
+			llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, memberIndex);
 			Generator::EmitStore(value, memberPtr);
 		}
 	}

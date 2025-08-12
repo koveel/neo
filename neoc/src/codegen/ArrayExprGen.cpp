@@ -7,7 +7,7 @@
 
 #include "CodegenUtils.h"
 
-llvm::Value* Generator::CreateArrayAlloca(llvm::Type* arrayType, const std::vector<std::unique_ptr<Expression>>& elements)
+llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements)
 {
 	PROFILE_FUNCTION();
 
@@ -24,8 +24,8 @@ llvm::Value* Generator::CreateArrayAlloca(llvm::Type* arrayType, const std::vect
 		values.push_back(element);
 	}
 
-	llvm::Value* alloc = Generator::EmitAlloca(arrayType);
-	bool isArrayOfStructs = arrayType->getContainedType(0)->isStructTy();
+	llvm::Value* alloc = Generator::EmitAlloca(arrayType->raw);
+	StructType* containedStructType = arrayType->contained->IsStruct();
 
 	// initialize elements (store into gep)
 	uint64_t i = 0;
@@ -33,10 +33,10 @@ llvm::Value* Generator::CreateArrayAlloca(llvm::Type* arrayType, const std::vect
 	for (llvm::Value* value : values)
 	{
 		llvm::Value* index = Generator::GetNumericConstant(TypeTag::Int32, i);
-		if (isArrayOfStructs)
-			value = Generator::EmitLoad(arrayType->getContainedType(0), value);
+		if (containedStructType)
+			value = Generator::EmitLoad(containedStructType, value);
 
-		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType, alloc, { zeroIndex, index }));
+		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType->raw, alloc, { zeroIndex, index }));
 
 		i++;
 	}
@@ -61,17 +61,4 @@ llvm::Value* ArrayDefinitionExpression::Generate()
 
 	Generator::ScopeValue(variableDef->name, { type, value });
 	return value;
-}
-
-// returns ptr
-static llvm::Value* GetArrayElement(llvm::Value* arrayPtr, llvm::Value* index)
-{
-	static llvm::Value* zeroIndex = Generator::GetNumericConstant(TypeTag::Int32, 0);
-
-	llvm::Type* arrayType = arrayPtr->getType()->getContainedType(0);
-	return Generator::EmitInBoundsGEP(arrayType, arrayPtr, { zeroIndex, index });
-}
-static llvm::Value* GetArrayElement(llvm::Value* arrayPtr, uint64_t index)
-{
-	return GetArrayElement(arrayPtr, Generator::GetNumericConstant(TypeTag::Int32, index));
 }

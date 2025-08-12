@@ -26,7 +26,7 @@ public:
 
 	// Instructions
 	static llvm::Value* EmitStore(llvm::Value* value, llvm::Value* ptr);
-	static llvm::Value* EmitLoad(llvm::Type* resultType, llvm::Value* ptr);
+	static llvm::Value* EmitLoad(Type* resultType, llvm::Value* ptr);
 	static llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 	static llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 
@@ -40,7 +40,7 @@ public:
 	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr);
 	static llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
 
-	static llvm::Value* EmitStructGEP(llvm::Value* ptr, uint32_t memberIndex);
+	static llvm::Value* EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex);
 	static llvm::Value* EmitInBoundsGEP(llvm::Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
 
 	static llvm::Value* GetNumericConstant(TypeTag tag, int64_t value);
@@ -50,7 +50,7 @@ public:
 	static void InitializeStructMembersToDefault(llvm::Value* structPtr, StructType* type);
 
 	// Array
-	static llvm::Value* CreateArrayAlloca(llvm::Type* arrayType, const std::vector<std::unique_ptr<Expression>>& elements);
+	static llvm::Value* CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements);
 
 	// Values
 	static bool ScopeValue(const std::string& name, const Value& value);

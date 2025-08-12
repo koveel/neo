@@ -12,6 +12,25 @@
 #include "CodegenUtils.h"
 #include "Enum.h"
 
+/*
+For loads, use getType().
+For stores, use getValueOperand()->getType().
+Use getLoadStoreType() to handle both of the above in one call.
+For getelementptr instructions, use getSourceElementType().
+For calls, use getFunctionType().
+For allocas, use getAllocatedType()
+For globals, use getValueType()
+For consistency assertions, use PointerType::isOpaqueOrPointeeTypeEquals()
+To create a pointer type in a different address space, use PointerType::getWithSamePointeeType()
+To check that two pointers have the same element type, use PointerType::hasSameElementTypeAs()
+*/
+
+/*
+llvm::Type* -> Type*
+
+
+*/
+
 static std::unique_ptr<llvm::LLVMContext> s_Context;
 static std::unique_ptr<llvm::IRBuilder<>> s_Builder;
 static std::unique_ptr<llvm::Module> s_Module;
@@ -33,6 +52,9 @@ static void Warn(int line, const std::string& message, Args&&... args)
 	std::cout << "[line " << line << "]: warning " << FormatString(message, std::forward<Args>(args)...) << "\n";
 	ResetConsoleColor();
 }
+
+// TODO: fix line shit, better errors
+static void ResolveType(Type&, int line = -1);
 
 static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
 {
@@ -65,8 +87,7 @@ llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* 
 	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
 
-	Type* type = expr->type;
-	return EmitLoad(type->raw, generated);
+	return EmitLoad(expr->type, generated);
 }
 
 llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
@@ -96,7 +117,7 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	if (!isPointer || isString)
 		return value;
 
-	return Generator::EmitLoad(expr->type->raw, value);
+	return Generator::EmitLoad(expr->type, value);
 }
 
 llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source)
@@ -110,18 +131,17 @@ llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* t
 
 	Cast* cast = Cast::IsValid(from, to);
 	if (!cast)
-		throw CompileError(source->sourceLine, "cannot cast from '{}' to '{}'", from->GetName().c_str(), to->GetName().c_str());
+		throw CompileError(source->sourceLine, "cannot cast from '{}' to '{}'", from->GetName(), to->GetName());
 
 	if (isExplicit || cast->implicit)
 		return cast->Invoke(v);
 
-	throw CompileError(source->sourceLine, "cannot implicitly cast from '{}' to '{}'", from->GetName().c_str(), to->GetName().c_str());
+	throw CompileError(source->sourceLine, "cannot implicitly cast from '{}' to '{}'", from->GetName(), to->GetName());
 }
 
-llvm::Value* Generator::EmitStructGEP(llvm::Value* ptr, uint32_t memberIndex)
+llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex)
 {
-	llvm::Type* type = ptr->getType();
-	return s_Builder->CreateStructGEP(type, ptr, memberIndex);
+	return s_Builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
 }
 
 llvm::Value* Generator::EmitInBoundsGEP(llvm::Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
@@ -278,32 +298,32 @@ llvm::Value* UnaryExpression::Generate()
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = Generator::EmitLoad(type->contained->raw, value);
-		s_Builder->CreateStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
+		Generator::EmitStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return newly incremented value
-		return Generator::EmitLoad(type->contained->raw, value);
+		return Generator::EmitLoad(type->contained, value);
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = Generator::EmitLoad(type->contained->raw, value);
-		s_Builder->CreateStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
+		Generator::EmitStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return value before increment
 		return loaded;
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = Generator::EmitLoad(type->contained->raw, value);
-		s_Builder->CreateStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
+		Generator::EmitStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
-		return Generator::EmitLoad(type->contained->raw, value);
+		return Generator::EmitLoad(type->contained, value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = Generator::EmitLoad(type->contained->raw, value);
-		s_Builder->CreateStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
+		Generator::EmitStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
 
 		return loaded;
 	}
@@ -323,7 +343,7 @@ llvm::Value* UnaryExpression::Generate()
 				load = false;
 		}
 
-		return load ? Generator::EmitLoad(type->contained->raw, value) : value;
+		return load ? Generator::EmitLoad(type->contained, value) : value;
 	}
 	}
 
@@ -387,13 +407,12 @@ llvm::Value* VariableDefinitionExpression::Generate()
 				aggregateInitialization = true;
 
 				if (!compound->type) {
-					if (!type->IsStruct())
-						LogError("expected variable to be of a structure type for aggregate initialization");
+					throw CompileError(compound->sourceLine, "expected aggregate initializer to be typed");
 				}
 
-				if (compound->type && compound->type->IsArray()) // [...]
+				if (ArrayType* compoundArrayType = compound->type->IsArray()) // [...]
 				{
-					llvm::Value* initializer = Generator::CreateArrayAlloca(compound->type->raw, compound->children);
+					llvm::Value* initializer = Generator::CreateArrayAlloca(compoundArrayType, compound->children);
 					s_CurrentScope->AddValue(name, { type = compound->type, initializer });
 					return initializer;
 				}
@@ -415,7 +434,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	}
 
 	// Alloc
-	llvm::Value* alloc = s_Builder->CreateAlloca(type->raw, nullptr, name);
+	llvm::Value* alloc = Generator::EmitAlloca(type->raw);
 	s_CurrentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
@@ -433,7 +452,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 
 		//initialVal = Generator::LoadValueIfVariable(initializer->Generate(), initializer);
 		initialVal = initializer->Generate();
-		s_Builder->CreateStore(initialVal, alloc);
+		Generator::EmitStore(initialVal, alloc);
 
 		return alloc;
 	}
@@ -449,25 +468,9 @@ llvm::Value* VariableDefinitionExpression::Generate()
 	}
 
 	initialVal = Generator::CastValueIfNecessary(initialVal, initializer->type, type, false, initializer.get());
-	s_Builder->CreateStore(initialVal, alloc);
+	Generator::EmitStore(initialVal, alloc);
 
 	return alloc;
-}
-
-static uint32_t GetTypePointerDepth(llvm::Type* type)
-{
-	uint32_t depth = 0;
-	llvm::Type* subtype = type->getContainedType(depth++);
-	while (true)
-	{
-		if (!subtype->isPointerTy())
-			break;
-
-		subtype = subtype->getContainedType(0);
-		depth++;
-	}
-
-	return depth;
 }
 
 llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
@@ -477,15 +480,14 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
 	// If left is MemberAccess: objectValue = gepinst (ptr)
 	llvm::Value* objectValue = binary->left->Generate();
-	Type* objectType = Type::FromLLVM(objectValue->getType())->contained;
-	ASSERT(objectType);
+	Type* objectType = binary->left->type;
 
 	if (!objectType->IsStruct() && !objectType->IsArray())
 	{
 		// This is where u would have used -> instead of . (if I wanted that stupid feature)
 		if (objectType->IsPointer())
 		{
-			objectValue = EmitLoad(objectType->raw, objectValue);
+			objectValue = EmitLoad(objectType, objectValue);
 			objectType = objectType->GetContainedType();
 		}
 		else
@@ -500,12 +502,12 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	const std::string& targetMemberName = memberExpr->name;
 	
 	// epic hardcoded array.size
-	if (objectType->IsArray() && targetMemberName == "count")
-	{
-		uint64_t size = objectType->raw->getArrayNumElements();
-		binary->type = Type::Get(TypeTag::UInt32);
-		return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, size, false));
-	}
+	//if (objectType->IsArray() && targetMemberName == "count")
+	//{
+	//	uint64_t size = objectType->raw->getArrayNumElements();
+	//	binary->type = Type::Get(TypeTag::UInt32);
+	//	return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, size, false));
+	//}
 
 	StructType* structType = objectType->IsStruct();
 
@@ -523,9 +525,9 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 		}
 	}
 	if (memberIndex == -1)
-		throw CompileError(binary->sourceLine, "'{}' not a member of struct '{}'", memberExpr->name.c_str(), objectType->GetName().c_str());
+		throw CompileError(binary->sourceLine, "'{}' not a member of struct '{}'", memberExpr->name, objectType->GetName());
 
-	llvm::Value* memberPtr = s_Builder->CreateStructGEP(objectType->raw, objectValue, (uint32_t)memberIndex);
+	llvm::Value* memberPtr = EmitStructGEP(structType, objectValue, (uint32_t)memberIndex);
 	return memberPtr;
 }
 
@@ -565,7 +567,7 @@ llvm::Value* VariableAccessExpression::Generate()
 {
 	Value variable;
 	if (!s_CurrentScope->HasValue(name, &variable))
-		throw CompileError(sourceLine, "identifier '{}' not declared in scope", name.c_str());
+		throw CompileError(sourceLine, "identifier '{}' not declared in scope", name);
 
 	type = variable.type;
 	return variable.raw;
@@ -576,9 +578,13 @@ llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
 	return s_Builder->CreateStore(value, ptr);
 }
 
-llvm::Value* Generator::EmitLoad(llvm::Type* result, llvm::Value* ptr)
+llvm::Value* Generator::EmitLoad(Type* result, llvm::Value* ptr)
 {
-	return s_Builder->CreateLoad(result, ptr);
+	// Make sure we always have all our juicy type data
+	//Type* neoType = Type::FromLLVM(result);
+	//ResolveType(*neoType);
+
+	return s_Builder->CreateLoad(result->raw, ptr);
 }
 
 llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
@@ -591,9 +597,13 @@ llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, ll
 	return s_Builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
 }
 
-llvm::Value* Generator::EmitAlloca(llvm::Type* type, llvm::Value* arraySize)
+llvm::Value* Generator::EmitAlloca(llvm::Type* rawType, llvm::Value* arraySize)
 {
-	return s_Builder->CreateAlloca(type, arraySize);
+	// Make sure we always have all our juicy type data
+	Type* neoType = Type::FromLLVM(rawType)->GetPointerTo();
+	ResolveType(*neoType);
+
+	return s_Builder->CreateAlloca(rawType, arraySize);
 }
 
 llvm::Value* ConstantDefinitionExpression::Generate()
@@ -699,7 +709,7 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 		// Allocate return value
 		if (!isVoid)
-			s_CurrentFunction.returnValueAlloca = s_Builder->CreateAlloca(s_CurrentFunction.llvmFunction->getReturnType(), nullptr, "returnv");
+			s_CurrentFunction.returnValueAlloca = Generator::EmitAlloca(s_CurrentFunction.llvmFunction->getReturnType());
 
 		s_CurrentFunction.returnBlock = llvm::BasicBlock::Create(*s_Context, "exit", s_CurrentFunction.llvmFunction);
 	}
@@ -715,8 +725,8 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 			continue;
 
 		// Alloc arg
-		llvm::Value* alloc = s_Builder->CreateAlloca(arg.getType());
-		s_Builder->CreateStore(&arg, alloc);
+		llvm::Value* alloc = Generator::EmitAlloca(arg.getType());
+		Generator::EmitStore(&arg, alloc);
 		s_CurrentScope->AddValue(parameter->name, { parameter->type, alloc });
 	}
 
@@ -736,10 +746,14 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 
 		s_Builder->SetInsertPoint(s_CurrentFunction.returnBlock);
 
-		if (isVoid)
+		// Terminator
+		if (isVoid) {
 			s_Builder->CreateRetVoid();
-		else
-			s_Builder->CreateRet(Generator::EmitLoad(s_CurrentFunction.llvmFunction->getReturnType(), s_CurrentFunction.returnValueAlloca));
+		}
+		else {
+			//Type* returnType = 
+			s_Builder->CreateRet(Generator::EmitLoad(type, s_CurrentFunction.returnValueAlloca));
+		}
 	}
 
 	{
@@ -769,7 +783,7 @@ llvm::Value* CastExpression::Generate()
 
 	Cast* cast = useTag ? Cast::IsValid(from->type->tag, type->tag) : Cast::IsValid(from->type, type);
 	if (!cast)
-		throw CompileError(sourceLine, "cannot cast from '{}' to '{}'", from->type->GetName().c_str(), type->GetName().c_str());
+		throw CompileError(sourceLine, "cannot cast from '{}' to '{}'", from->type->GetName(), type->GetName());
 
 	return cast->Invoke(value, this);
 }
@@ -795,15 +809,15 @@ llvm::Value* ReturnStatement::Generate()
 	{
 		if (StructType* structType = type->IsStruct())
 		{
-			llvm::Value* structPtr = s_Builder->CreateAlloca(type->raw);
+			llvm::Value* structPtr = Generator::EmitAlloca(type->raw);
 			Generator::InitializeStructMembersAggregate(structPtr, structType, compound);
 
-			returnValue = Generator::EmitLoad(type->raw, structPtr);
+			returnValue = Generator::EmitLoad(type, structPtr);
 		}
 		if (ArrayType* arrayType = type->IsArray())
 		{
-			llvm::Value* arrayPtr = Generator::CreateArrayAlloca(arrayType->raw, compound->children);
-			returnValue = Generator::EmitLoad(arrayType->raw, arrayPtr);
+			llvm::Value* arrayPtr = Generator::CreateArrayAlloca(arrayType, compound->children);
+			returnValue = Generator::EmitLoad(arrayType, arrayPtr);
 		}
 
 		ASSERT(returnValue);
@@ -815,7 +829,7 @@ llvm::Value* ReturnStatement::Generate()
 		returnValue = Generator::CastValueIfNecessary(Generator::LoadValueIfVariable(returnValue, value), value->type, type, false, this);
 	}
 
-	s_Builder->CreateStore(returnValue, s_CurrentFunction.returnValueAlloca);
+	Generator::EmitStore(returnValue, s_CurrentFunction.returnValueAlloca);
 	s_Builder->CreateBr(s_CurrentFunction.returnBlock);
 
 	return returnValue;
@@ -825,35 +839,37 @@ llvm::Value* FunctionCallExpression::Generate()
 {
 	PROFILE_FUNCTION();
 
-	llvm::Function* function = s_Module->getFunction(name.c_str());
-	if (!function)
-		throw CompileError(sourceLine, "undeclared function '{}'", name.c_str());
+	Module& module = s_Generator->module;
 
-	if (function->arg_size() != arguments.size())
-		throw CompileError(sourceLine, "expected {} arguments for call to '{}' but got {}", function->arg_size(), name.c_str(), arguments.size());
-	
-	type = Type::FromLLVM(function->getReturnType());
+	if (!module.DefinedFunctions.count(name)) {
+		throw CompileError(sourceLine, "undeclared function '{}'", name);
+	}
+	FunctionSignature& signature = module.DefinedFunctions[name];
+	if (signature.Parameters.size() != arguments.size()) {
+		throw CompileError(sourceLine, "expected {} arguments for call to '{}' but got {}", signature.Parameters.size(), name, arguments.size());
+	}
+	type = signature.Return;
+
+	llvm::Function* function = s_Module->getFunction(name);
 
 	std::vector<llvm::Value*> argValues;
 	uint32_t i = 0;
 	for (auto& expr : arguments)
 	{
+		// Generate arg
 		llvm::Value* value = expr->Generate();
+		Type* argumentType = expr->type;
 		value = Generator::LoadValueIfVariable(value, expr);
 
-		llvm::Type* expectedTy = function->getArg(i++)->getType();
-		value = Generator::CastValueIfNecessary(value, expr->type, Type::FromLLVM(expectedTy), false, expr.get());
-
-		if (expectedTy != value->getType())
-			throw CompileError(sourceLine, "invalid type for argument {} passed to '{}'", i - 1, name.c_str());
+		// Type check
+		Type* expectedTy = signature.Parameters[i++];
+		value = Generator::CastValueIfNecessary(value, expr->type, expectedTy, false, expr.get());
 			
 		argValues.push_back(value);
 	}
 
 	return s_Builder->CreateCall(function, argValues);
 }
-
-static void ResolveType(Type&, int line = -1);
 
 static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 {
@@ -938,7 +954,7 @@ static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
 	if (!type.definition) {
 		return;
 	}
-	//throw CompileError(possibleSourceLine, "type '{}' not defined", type.name.c_str());
+	//throw CompileError(possibleSourceLine, "type '{}' not defined", type.name);
 
 	auto& members = type.definition->members;
 
@@ -1037,19 +1053,26 @@ static void VisitFunctionDefinition(FunctionDefinitionExpression* expr)
 {
 	FunctionPrototype& prototype = expr->prototype;
 	if (s_Module->getFunction(prototype.Name))
-		throw CompileError(expr->sourceLine, "redefinition of function '{}'", prototype.Name.c_str());
+		throw CompileError(expr->sourceLine, "redefinition of function '{}'", prototype.Name);
 
-	// Param types
-	std::vector<llvm::Type*> parameterTypes(prototype.Parameters.size());
+	std::vector<Type*> parameterTypes(prototype.Parameters.size());
 	uint32_t i = 0;
 	for (auto& param : prototype.Parameters)
-		parameterTypes[i++] = param->type->raw;
+		parameterTypes[i++] = param->type;
 	i = 0;
+	
+	// Keep track of all functions in module for function call expressions
+	s_Generator->module.DefinedFunctions[prototype.Name] = { prototype.ReturnType, parameterTypes };
 
-	llvm::Type* retType = prototype.ReturnType->raw;
+	// Param types
+	std::vector<llvm::Type*> llvmParameterTypes(prototype.Parameters.size());
+	for (auto& ty : parameterTypes)
+		llvmParameterTypes[i++] = ty->raw;
 
-	llvm::FunctionType* functionType = llvm::FunctionType::get(retType, parameterTypes, false);
-	llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name.c_str(), *s_Module);
+	llvm::Type* returnType = prototype.ReturnType->raw;
+
+	llvm::FunctionType* functionType = llvm::FunctionType::get(returnType, llvmParameterTypes, false);
+	llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name, *s_Module);
 }
 
 static void VisitEnumDefinition(EnumDefinitionExpression* expr)
@@ -1492,8 +1515,6 @@ bool Generator::ScopeValue(const std::string& name, const Value& value)
 }
 
 
-
-
 llvm::Value* LoopExpression::Generate()
 {
 	PROFILE_FUNCTION();
@@ -1503,7 +1524,7 @@ llvm::Value* LoopExpression::Generate()
 	llvm::Value* arrayPtr = nullptr;
 
 	Type* iteratorType = range->type;
-	llvm::Value* indexValuePtr = s_Builder->CreateAlloca(indexType);
+	llvm::Value* indexValuePtr = Generator::EmitAlloca(indexType);
 	llvm::Value* maximumIndex = nullptr;
 	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
 
@@ -1514,7 +1535,7 @@ llvm::Value* LoopExpression::Generate()
 	if (!IsRange(range, &rangeOperand))
 	{
 		arrayPtr = range->Generate();
-		arrayType = arrayPtr->getType()->getContainedType(0);
+		//arrayType = arrayPtr->getType()->getContainedType(0);
 
 		if (!arrayType->isArrayTy())
 			throw CompileError(range->sourceLine, "expected an object of array type to iterate");
@@ -1523,16 +1544,16 @@ llvm::Value* LoopExpression::Generate()
 		iteratorType = range->type->GetContainedType();
 
 		// Init iterator
-		iteratorValuePtr = s_Builder->CreateAlloca(arrayType->getArrayElementType());
+		iteratorValuePtr = Generator::EmitAlloca(arrayType->getArrayElementType());
 
 		// gep
 		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
 		llvm::Value* initialValue = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
-		initialValue = Generator::EmitLoad(arrayType->getContainedType(0), initialValue);
-		s_Builder->CreateStore(initialValue, iteratorValuePtr);
+		//initialValue = Generator::EmitLoad(arrayType, initialValue);
+		Generator::EmitStore(initialValue, iteratorValuePtr);
 
 		llvm::Value* zero = llvm::ConstantInt::get(indexType, llvm::APInt(32, 0, false));
-		s_Builder->CreateStore(zero, indexValuePtr);
+		Generator::EmitStore(zero, indexValuePtr);
 
 		iteratingArray = true;
 
@@ -1549,7 +1570,7 @@ llvm::Value* LoopExpression::Generate()
 		maximumIndex = maximum;
 
 		iteratorType = rangeOperand->left->type;
-		s_Builder->CreateStore(minimum, indexValuePtr);
+		Generator::EmitStore(minimum, indexValuePtr);
 
 		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
 	}
@@ -1568,7 +1589,8 @@ llvm::Value* LoopExpression::Generate()
 	{
 		llvm::Value* bShouldContinue = nullptr;
 
-		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
+		//llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
+		llvm::Value* iteratorVal = Generator::EmitLoad(nullptr, indexValuePtr);
 		llvm::Type* iteratorType = iteratorVal->getType();
 
 		bShouldContinue = s_Builder->CreateICmpSLT(iteratorVal, maximumIndex);
@@ -1581,8 +1603,9 @@ llvm::Value* LoopExpression::Generate()
 	//	Jump to condition block
 	s_Builder->SetInsertPoint(incrementBlock);
 	{
-		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
-		s_Builder->CreateStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
+		//llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
+		llvm::Value* iteratorVal = Generator::EmitLoad(nullptr, indexValuePtr);
+		Generator::EmitStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
 		s_Builder->CreateBr(conditionBlock);
 	}
 
@@ -1594,8 +1617,10 @@ llvm::Value* LoopExpression::Generate()
 		if (iteratingArray)
 		{
 			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-			llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(indexType, indexValuePtr) });
-			s_Builder->CreateStore(Generator::EmitLoad(arrayType->getContainedType(0), currentElementPtr), iteratorValuePtr);
+			//llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(indexType, indexValuePtr) });
+			llvm::Value* currentElementPtr = s_Builder->CreateInBoundsGEP(arrayType, arrayPtr, { zeroIndex, Generator::EmitLoad(nullptr, indexValuePtr) });
+			//Generator::EmitStore(Generator::EmitLoad(arrayType->getContainedType(0), currentElementPtr), iteratorValuePtr);
+			Generator::EmitStore(Generator::EmitLoad(nullptr, currentElementPtr), iteratorValuePtr);
 		}
 
 		for (auto& expr : body)

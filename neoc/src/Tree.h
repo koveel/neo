@@ -43,7 +43,6 @@ struct NullExpression : public Expression
 	using Expression::Expression;
 
 	llvm::Value* Generate() override;
-	//llvm::Value* ResolveType() override {}
 };
 
 struct PrimaryExpression : public Expression

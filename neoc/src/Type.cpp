@@ -2,6 +2,8 @@
 
 #include "Type.h"
 
+#include <llvm/IR/Type.h>
+
 std::unordered_map<Type::Key, Type*> Type::RegisteredTypes;
 std::unordered_map<llvm::Type*, Type*> Type::LLVMToNeoTypes;
 std::unordered_map<std::string, AliasType*> AliasType::RegisteredTypes;
@@ -98,6 +100,11 @@ Type* Type::Get(const std::string& name, Type* contained)
 
 Type* Type::FromLLVM(llvm::Type* raw)
 {
+	if (raw->isPointerTy())
+	{
+		ASSERT(false);
+	}
+
 	ASSERT(LLVMToNeoTypes.count(raw));
 
 	return LLVMToNeoTypes[raw];
