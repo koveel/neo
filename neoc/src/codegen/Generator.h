@@ -47,7 +47,7 @@ public:
 	llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
 
 	llvm::Value* EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex);
-	llvm::Value* EmitInBoundsGEP(Type* arrayType, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
+	llvm::Value* EmitInBoundsGEP(Type* resultType, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
 
 	llvm::Value* GetNumericConstant(TypeTag tag, int64_t value);
 

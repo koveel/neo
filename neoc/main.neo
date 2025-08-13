@@ -8,22 +8,18 @@ Food :: enum
     Cake,
 }
 
+print :: (msg: string)
+{
+    printf(msg);
+    printf("\n");
+}
+
 main :: () -> i32
 {
-    msgs := [] {
-        "One",
-        "Two",
-        "Three",
+    nums := [] {
+        0, 1, 0, 3, 4, 5
     };
-
-    it := 0;
-    for msg: msgs {
-        if it++ == 0
-            continue;
-
-        printf(msg);
-        printf("\n");
-    }
-
-    return 2;
+    
+    second := @nums[0];
+    return *(second + nums[2]);
 }

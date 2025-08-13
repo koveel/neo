@@ -3,13 +3,23 @@
 #include "Tree.h"
 
 #include "Cast.h"
-#include "Generator.h"
+#include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/InstrTypes.h>
+#include "Generator.h"
+#include "GeneratorContext.h"
 
 static bool IsArithmetic(BinaryType type)
 {
-	uint32_t num = (uint32_t)type;
-	return num >= 1 && num <= 8;
+	switch (type)
+	{
+	case BinaryType::Add:
+	case BinaryType::Divide:
+	case BinaryType::Subtract:
+	case BinaryType::Multiply:
+		return true;
+	}
+
+	return false;
 }
 
 static bool IsComparison(BinaryType type)
@@ -168,12 +178,16 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 		lhs = generator.LoadValueIfVariable(lhs, left);
 	rhs = generator.LoadValueIfVariable(rhs, right);
 
-	::Type* leftType = left->type;
-	::Type* rightType = right->type;
-	if (leftType != rightType)
+	if (left->type != right->type)
 	{
-		ResolveBinaryExpressionTypeDiscrepancy({ lhs, leftType }, { rhs, rightType }, this);
-		//rhs = generator.CastValueIfNecessary(rhs, right->type, left->type, false, this);
+		if (left->type->IsPointer() && IsArithmetic(binaryType)) {
+			bool subtracting = binaryType == BinaryType::Subtract;
+			llvm::Value* offset = !subtracting ? rhs : generator.llvm_context->builder->CreateNeg(rhs);
+
+			return generator.EmitInBoundsGEP(left->type->contained, lhs, { offset });
+		}
+
+		ResolveBinaryExpressionTypeDiscrepancy({ lhs, left->type }, { rhs, right->type }, this);
 	}
 
 	llvm::Type* lhsType = lhs->getType();
@@ -193,10 +207,10 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 	case BinaryType::LessEqual:
 	case BinaryType::Greater:
 	case BinaryType::GreaterEqual:
-		return generator.EmitComparisonOperator(LLVMCompareOpFromBinaryExpr(binaryType, leftType), lhs, rhs);
+		return generator.EmitComparisonOperator(LLVMCompareOpFromBinaryExpr(binaryType, left->type), lhs, rhs);
 	default:
 	{
-		instruction = LLVMBinaryOpFromBinaryExpr(binaryType, leftType);
+		instruction = LLVMBinaryOpFromBinaryExpr(binaryType, left->type);
 		break;
 	}
 	}

@@ -48,6 +48,9 @@ llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* 
 
 	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
+
+	if (!generated->getType()->isPointerTy() || expr->type->IsString())
+		return generated;
 		
 	return EmitLoad(expr->type, generated);
 }
@@ -232,6 +235,20 @@ llvm::Value* StringExpression::Generate(Generator& generator)
 	return builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module);
 }
 
+static bool IsUnaryArithmeticOperation(UnaryType type)
+{
+	switch (type)
+	{
+	case UnaryType::PrefixIncrement:
+	case UnaryType::PrefixDecrement:
+	case UnaryType::PostfixIncrement:
+	case UnaryType::PostfixDecrement:
+		return true;
+	}
+
+	return false;
+}
+
 llvm::Value* UnaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
@@ -240,6 +257,33 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 
 	llvm::Value* value = operand->Generate(generator);
 	type = operand->type;
+
+	if (type->IsPointer() && IsUnaryArithmeticOperation(unaryType))
+	{
+		bool postfix = false;
+		llvm::Value* offset = nullptr;
+		switch (unaryType)
+		{
+		case UnaryType::PrefixIncrement:
+		case UnaryType::PostfixIncrement:
+			offset = generator.GetNumericConstant(TypeTag::Int32, 1);
+			postfix = unaryType == UnaryType::PostfixIncrement;
+			break;
+		case UnaryType::PrefixDecrement:
+		case UnaryType::PostfixDecrement:
+			offset = generator.GetNumericConstant(TypeTag::Int32, -1);
+			postfix = unaryType == UnaryType::PostfixDecrement;
+			break;
+		}
+
+		llvm::Value* pointer = generator.LoadValueIfVariable(value, operand);
+
+		llvm::Value* initial = pointer;
+		llvm::Value* result = generator.EmitInBoundsGEP(operand->type->contained, pointer, { offset });
+		generator.EmitStore(result, value);
+
+		return postfix ? initial : generator.EmitLoad(type, value);
+	}
 
 	switch (unaryType)
 	{
@@ -268,7 +312,7 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	{
 		// Increment
 		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
+		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(type->tag, 1)), value);
 
 		// Return newly incremented value
 		return generator.EmitLoad(type, value);
@@ -277,7 +321,7 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	{
 		// Increment
 		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
+		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(type->tag, 1)), value);
 
 		// Return value before increment
 		return loaded;
@@ -285,14 +329,14 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	case UnaryType::PrefixDecrement:
 	{
 		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
+		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(type->tag, 1)), value);
 
 		return generator.EmitLoad(type, value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
 		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
+		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(type->tag, 1)), value);
 
 		return loaded;
 	}
@@ -312,7 +356,7 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
-		return load ? generator.EmitLoad(type->contained, value) : value;
+		return load ? generator.EmitLoad(type, value) : value;
 	}
 	}
 
@@ -806,7 +850,8 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 	{
 		// Everything else
 		returnValue = value->Generate(generator);
-		returnValue = generator.CastValueIfNecessary(generator.LoadValueIfVariable(returnValue, value), value->type, type, false, this);
+		llvm::Value* loaded = generator.LoadValueIfVariable(returnValue, value);
+		returnValue = generator.CastValueIfNecessary(loaded, value->type, type, false, this);
 	}
 
 	generator.EmitStore(returnValue, current_function.return_value_alloca);
