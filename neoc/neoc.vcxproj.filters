@@ -36,6 +36,7 @@
       <Filter>codegen</Filter>
     </ClInclude>
     <ClInclude Include="src\pch.h" />
+    <ClInclude Include="src\codegen\GeneratorContext.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">
@@ -72,5 +73,6 @@
       <Filter>codegen</Filter>
     </ClCompile>
     <ClCompile Include="src\pch.cpp" />
+    <ClCompile Include="src\codegen\Visiting.cpp" />
   </ItemGroup>
 </Project>

@@ -17,4 +17,5 @@ namespace llvm
 {
 	class Type;
 	class Value;
+	class Module;
 }

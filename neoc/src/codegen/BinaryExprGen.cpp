@@ -146,34 +146,34 @@ static void ResolveBinaryExpressionTypeDiscrepancy(std::pair<llvm::Value*&, Type
 	}
 }
 
-llvm::Value* BinaryExpression::Generate()
+llvm::Value* BinaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
 	using namespace llvm;
 
 	if (binaryType == BinaryType::MemberAccess)
-		return Generator::HandleMemberAccessExpression(this);
+		return generator.HandleMemberAccessExpression(this);
 	if (binaryType == BinaryType::Subscript)
-		return Generator::EmitSubscript(this);
+		return generator.EmitSubscript(this);
 
-	llvm::Value* lhs = left->Generate();
-	llvm::Value* rhs = right->Generate();
+	llvm::Value* lhs = left->Generate(generator);
+	llvm::Value* rhs = right->Generate(generator);
 	llvm::Value* pointerLhs = lhs;
 
 	type = left->type;
 
 	// Unless assiging, treat variables as the underlying values
 	if (binaryType != BinaryType::Assign)
-		lhs = Generator::LoadValueIfVariable(lhs, left);
-	rhs = Generator::LoadValueIfVariable(rhs, right);
+		lhs = generator.LoadValueIfVariable(lhs, left);
+	rhs = generator.LoadValueIfVariable(rhs, right);
 
 	::Type* leftType = left->type;
 	::Type* rightType = right->type;
 	if (leftType != rightType)
 	{
 		ResolveBinaryExpressionTypeDiscrepancy({ lhs, leftType }, { rhs, rightType }, this);
-		//rhs = Generator::CastValueIfNecessary(rhs, right->type, left->type, false, this);
+		//rhs = generator.CastValueIfNecessary(rhs, right->type, left->type, false, this);
 	}
 
 	llvm::Type* lhsType = lhs->getType();
@@ -184,7 +184,7 @@ llvm::Value* BinaryExpression::Generate()
 	{
 	case BinaryType::Assign:
 	{
-		Generator::EmitStore(rhs, lhs);
+		generator.EmitStore(rhs, lhs);
 		return rhs;
 	}
 	case BinaryType::Equal:
@@ -193,7 +193,7 @@ llvm::Value* BinaryExpression::Generate()
 	case BinaryType::LessEqual:
 	case BinaryType::Greater:
 	case BinaryType::GreaterEqual:
-		return Generator::EmitComparisonOperator(LLVMCompareOpFromBinaryExpr(binaryType, leftType), lhs, rhs);
+		return generator.EmitComparisonOperator(LLVMCompareOpFromBinaryExpr(binaryType, leftType), lhs, rhs);
 	default:
 	{
 		instruction = LLVMBinaryOpFromBinaryExpr(binaryType, leftType);
@@ -202,10 +202,10 @@ llvm::Value* BinaryExpression::Generate()
 	}
 
 	
-	llvm::Value* result = Generator::EmitBinaryOperator(instruction, lhs, rhs);
+	llvm::Value* result = generator.EmitBinaryOperator(instruction, lhs, rhs);
 
 	if (isCompoundAssignment)
-		Generator::EmitStore(result, pointerLhs);
+		generator.EmitStore(result, pointerLhs);
 
 	return result;
 }

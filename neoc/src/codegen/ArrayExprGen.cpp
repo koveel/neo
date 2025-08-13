@@ -16,7 +16,7 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 
 	for (auto& expr : elements)
 	{
-		llvm::Value* element = expr->Generate();
+		llvm::Value* element = expr->Generate(*this);
 		//if (elementType && (elementType != element->getType()))
 		//	//throw CompileError(sourceLine, "expected {} as array element but got {} (index = {})", )
 		//	throw CompileError(sourceLine, "array element type mismatch (index = {})", i);
@@ -24,19 +24,19 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 		values.push_back(element);
 	}
 
-	llvm::Value* alloc = Generator::EmitAlloca(arrayType);
+	llvm::Value* alloc = EmitAlloca(arrayType);
 	StructType* containedStructType = arrayType->contained->IsStruct();
 
 	// initialize elements (store into gep)
 	uint64_t i = 0;
-	llvm::Value* zeroIndex = Generator::GetNumericConstant(TypeTag::Int32, 0);
+	llvm::Value* zeroIndex = GetNumericConstant(TypeTag::Int32, 0);
 	for (llvm::Value* value : values)
 	{
-		llvm::Value* index = Generator::GetNumericConstant(TypeTag::Int32, i);
+		llvm::Value* index = GetNumericConstant(TypeTag::Int32, i);
 		if (containedStructType)
-			value = Generator::EmitLoad(containedStructType, value);
+			value = EmitLoad(containedStructType, value);
 
-		Generator::EmitStore(value, Generator::EmitInBoundsGEP(arrayType, alloc, { zeroIndex, index }));
+		EmitStore(value, EmitInBoundsGEP(arrayType, alloc, { zeroIndex, index }));
 
 		i++;
 	}
@@ -44,20 +44,20 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 	return alloc;
 }
 
-llvm::Value* ArrayDefinitionExpression::Generate()
+llvm::Value* ArrayDefinitionExpression::Generate(Generator& generator)
 {
 	llvm::Value* value = nullptr;
 	if (initializer)
 	{
-		value = initializer->Generate();
+		value = initializer->Generate(generator);
 		type = initializer->type;
 	}
 	else
 	{
 		type = ArrayType::Get(type, capacity);
-		value = Generator::EmitAlloca(type);
+		value = generator.EmitAlloca(type);
 	}
 
-	Generator::ScopeValue(variableDef->name, { type, value });
+	generator.ScopeValue(variableDef->name, { type, value });
 	return value;
 }

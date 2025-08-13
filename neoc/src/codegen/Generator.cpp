@@ -2,48 +2,19 @@
 
 #include "Tree.h"
 #include "Cast.h"
-#include "Generator.h"
 
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Verifier.h>
+
+#include "Generator.h"
 
 #include "PlatformUtils.h"
 
 #include "CodegenUtils.h"
 #include "Enum.h"
+#include "GeneratorContext.h"
 
-/*
-For loads, use getType().
-For stores, use getValueOperand()->getType().
-Use getLoadStoreType() to handle both of the above in one call.
-For getelementptr instructions, use getSourceElementType().
-For calls, use getFunctionType().
-For allocas, use getAllocatedType()
-For globals, use getValueType()
-For consistency assertions, use PointerType::isOpaqueOrPointeeTypeEquals()
-To create a pointer type in a different address space, use PointerType::getWithSamePointeeType()
-To check that two pointers have the same element type, use PointerType::hasSameElementTypeAs()
-*/
-
-/*
-llvm::Type* -> Type*
-
-
-*/
-
-static std::unique_ptr<llvm::LLVMContext> s_Context;
-static std::unique_ptr<llvm::IRBuilder<>> s_Builder;
-static std::unique_ptr<llvm::Module> s_Module;
-
-static Scope* s_CurrentScope = nullptr;
 static Generator* s_Generator = nullptr;
-
-static struct
-{
-	llvm::Function* llvmFunction = nullptr;
-	llvm::Value* returnValueAlloca = nullptr;
-	llvm::BasicBlock* returnBlock = nullptr;
-} s_CurrentFunction;
 
 template<typename... Args>
 static void Warn(int line, const std::string& message, Args&&... args)
@@ -51,22 +22,6 @@ static void Warn(int line, const std::string& message, Args&&... args)
 	SetConsoleColor(14);
 	std::cout << "[line " << line << "]: warning " << FormatString(message, std::forward<Args>(args)...) << "\n";
 	ResetConsoleColor();
-}
-
-// TODO: fix line shit, better errors
-static void ResolveType(Type&, int line = -1);
-
-static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
-{
-	if (expr->nodeType != NodeType::Binary)
-		return false;
-
-	BinaryExpression* binary = ToExpr<BinaryExpression>(expr);
-	if (binary->binaryType != BinaryType::Range)
-		return false;
-
-	*outBinary = binary;
-	return true;
 }
 
 llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
@@ -117,7 +72,7 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	if (!isPointer || isString)
 		return value;
 
-	return Generator::EmitLoad(expr->type, value);
+	return s_Generator->EmitLoad(expr->type, value);
 }
 
 llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source)
@@ -141,12 +96,12 @@ llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* t
 
 llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex)
 {
-	return s_Builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
+	return llvm_context->builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
 }
 
 llvm::Value* Generator::EmitInBoundsGEP(Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
 {
-	return s_Builder->CreateInBoundsGEP(type->raw, ptr, indices);
+	return llvm_context->builder->CreateInBoundsGEP(type->raw, ptr, indices);
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -179,38 +134,41 @@ static uint32_t GetBitWidthOfIntegralType(TypeTag tag)
 
 llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 {
+	auto& context = llvm_context->context;
+
 	switch (tag)
 	{
 	case TypeTag::UInt8:
 	case TypeTag::UInt16:
 	case TypeTag::UInt32:
 	case TypeTag::UInt64:
-		return llvm::ConstantInt::get(*s_Context, llvm::APInt(GetBitWidthOfIntegralType(tag), value, false));
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(tag), value, false));
 	case TypeTag::Int8:
 	case TypeTag::Int16:
 	case TypeTag::Int32:
 	case TypeTag::Int64:
-		return llvm::ConstantInt::get(*s_Context, llvm::APInt(GetBitWidthOfIntegralType(tag), value, true));
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(tag), value, true));
 	case TypeTag::Float32:
-		return llvm::ConstantFP::get(*s_Context, llvm::APFloat((float)value));
+		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value));
 	case TypeTag::Float64:
-		return llvm::ConstantFP::get(*s_Context, llvm::APFloat((double)value));
+		return llvm::ConstantFP::get(*context, llvm::APFloat((double)value));
 	}
 
 	ASSERT(false);
 	return nullptr;
 }
 
-llvm::Value* NullExpression::Generate()
+llvm::Value* NullExpression::Generate(Generator& generator)
 {
-	return llvm::ConstantPointerNull::get(llvm::PointerType::get(*s_Context, 0u));
+	return llvm::ConstantPointerNull::get(llvm::PointerType::get(*generator.llvm_context->context, 0u));
 }
 
-llvm::Value* PrimaryExpression::Generate()
+llvm::Value* PrimaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
 	constexpr auto s = std::numeric_limits<uint32_t>::max();
+	auto& context = generator.llvm_context->context;
 
 	switch (type->tag)
 	{
@@ -218,24 +176,24 @@ llvm::Value* PrimaryExpression::Generate()
 	case TypeTag::UInt16:
 	case TypeTag::UInt32:
 	case TypeTag::UInt64:
-		return llvm::ConstantInt::get(*s_Context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.u64, false));
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.u64, false));
 	case TypeTag::Int8:
 	case TypeTag::Int16:
 	case TypeTag::Int32:
 	case TypeTag::Int64:
-		return llvm::ConstantInt::get(*s_Context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.i64, true));
+		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.i64, true));
 	case TypeTag::Float32:
-		return llvm::ConstantFP::get(*s_Context, llvm::APFloat((float)value.f64));
+		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64));
 	case TypeTag::Float64:
-		return llvm::ConstantFP::get(*s_Context, llvm::APFloat(value.f64));
+		return llvm::ConstantFP::get(*context, llvm::APFloat(value.f64));
 	case TypeTag::Bool:
-		return llvm::ConstantInt::getBool(*s_Context, value.b32);
+		return llvm::ConstantInt::getBool(*context, value.b32);
 	}
 
 	throw CompileError(sourceLine, "invalid type for primary expression");
 }
 
-llvm::Value* StringExpression::Generate()
+llvm::Value* StringExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
@@ -262,35 +220,37 @@ llvm::Value* StringExpression::Generate()
 		stringExpr += c;
 	}
 
-	return s_Builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, s_Module.get());
+	return generator.llvm_context->builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module);
 }
 
-llvm::Value* UnaryExpression::Generate()
+llvm::Value* UnaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
-	llvm::Value* value = operand->Generate();
+	auto& builder = generator.llvm_context->builder;
+
+	llvm::Value* value = operand->Generate(generator);
 	type = operand->type;
 
 	switch (unaryType)
 	{
 	case UnaryType::Not: // !value
 	{
-		value = Generator::LoadValueIfVariable(value, operand);
-		return s_Builder->CreateNot(value);
+		value = generator.LoadValueIfVariable(value, operand);
+		return builder->CreateNot(value);
 	}
 	case UnaryType::Negate: // -value
 	{
-		value = Generator::LoadValueIfVariable(value, operand);
+		value = generator.LoadValueIfVariable(value, operand);
 
 		llvm::Type* valueType = value->getType();
 		switch (valueType->getTypeID())
 		{
 		case llvm::Type::IntegerTyID:
-			return s_Builder->CreateNeg(value);
+			return builder->CreateNeg(value);
 		case llvm::Type::FloatTyID:
 		case llvm::Type::DoubleTyID:
-			return s_Builder->CreateFNeg(value);
+			return builder->CreateFNeg(value);
 		}
 
 		throw CompileError(sourceLine, "invalid operand for unary negation (-), operand must be numeric");
@@ -298,32 +258,32 @@ llvm::Value* UnaryExpression::Generate()
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
-		Generator::EmitStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return newly incremented value
-		return Generator::EmitLoad(type->contained, value);
+		return generator.EmitLoad(type->contained, value);
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
-		Generator::EmitStore(s_Builder->CreateAdd(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return value before increment
 		return loaded;
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
-		Generator::EmitStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
-		return Generator::EmitLoad(type->contained, value);
+		return generator.EmitLoad(type->contained, value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = Generator::EmitLoad(type->contained, value);
-		Generator::EmitStore(s_Builder->CreateSub(loaded, Generator::GetNumericConstant(operand->type->tag, 1)), value);
+		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		return loaded;
 	}
@@ -343,7 +303,7 @@ llvm::Value* UnaryExpression::Generate()
 				load = false;
 		}
 
-		return load ? Generator::EmitLoad(type->contained, value) : value;
+		return load ? generator.EmitLoad(type->contained, value) : value;
 	}
 	}
 
@@ -354,28 +314,28 @@ llvm::Value* Generator::EmitSubscript(BinaryExpression* binary)
 {
 	PROFILE_FUNCTION();
 
-	llvm::Value* zeroIndex = llvm::ConstantInt::get(*s_Context, llvm::APInt(32, 0, false));
+	llvm::Value* zeroIndex = llvm::ConstantInt::get(*llvm_context->context, llvm::APInt(32, 0, false));
 
-	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(), binary->right);
+	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(*this), binary->right);
 	if (!indexVal->getType()->isIntegerTy())
 		throw CompileError(binary->sourceLine, "expected integer value for array index");
 
-	llvm::Value* arrayPtr = binary->left->Generate(); // todo: check this shit
+	llvm::Value* arrayPtr = binary->left->Generate(*this); // todo: check this shit
 	binary->type = binary->left->type->GetContainedType();
 
 	// Should be doing this at the start of this function
 	if (!binary->left->type->IsArray())
 		throw CompileError(binary->sourceLine, "expected subscript target to be of array type");
 
-	return s_Builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
+	return llvm_context->builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
 }
 
-llvm::Value* EnumDefinitionExpression::Generate()
+llvm::Value* EnumDefinitionExpression::Generate(Generator& generator)
 {
 	return nullptr;
 }
 
-llvm::Value* VariableDefinitionExpression::Generate()
+llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
@@ -391,7 +351,7 @@ llvm::Value* VariableDefinitionExpression::Generate()
 			case NodeType::ArrayDefinition:
 			{
 				auto array = ToExpr<ArrayDefinitionExpression>(initializer);
-				return array->Generate();
+				return array->Generate(generator);
 			}
 			case NodeType::Primary:
 			{
@@ -412,8 +372,8 @@ llvm::Value* VariableDefinitionExpression::Generate()
 
 				if (ArrayType* compoundArrayType = compound->type->IsArray()) // [...]
 				{
-					llvm::Value* initializer = Generator::CreateArrayAlloca(compoundArrayType, compound->children);
-					s_CurrentScope->AddValue(name, { type = compound->type, initializer });
+					llvm::Value* initializer = generator.CreateArrayAlloca(compoundArrayType, compound->children);
+					generator.currentScope->AddValue(name, { type = compound->type, initializer });
 					return initializer;
 				}
 
@@ -423,36 +383,36 @@ llvm::Value* VariableDefinitionExpression::Generate()
 
 		if (!aggregateInitialization)
 		{
-			initialVal = initializer->Generate();
-			initialVal = Generator::LoadValueIfVariable(initialVal, initializer.get());
+			initialVal = initializer->Generate(generator);
+			initialVal = generator.LoadValueIfVariable(initialVal, initializer.get());
 
 			if (type)
-				initialVal = Generator::CastValueIfNecessary(initialVal, initializer->type, type, false, this);
+				initialVal = generator.CastValueIfNecessary(initialVal, initializer->type, type, false, this);
 			else
 				type = initializer->type;
 		}
 	}
 
 	// Alloc
-	llvm::Value* alloc = Generator::EmitAlloca(type);
-	s_CurrentScope->AddValue(name, { type, alloc });
+	llvm::Value* alloc = generator.EmitAlloca(type);
+	generator.currentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
 	if (StructType* structType = type->IsStruct())
 	{
 		if (aggregateInitialization) {
-			Generator::InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
+			generator.InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
 			return alloc;
 		}
 		
 		if (!initializer) {
-			Generator::InitializeStructMembersToDefault(alloc, structType);
+			generator.InitializeStructMembersToDefault(alloc, structType);
 			return alloc;
 		}
 
-		//initialVal = Generator::LoadValueIfVariable(initializer->Generate(), initializer);
-		initialVal = initializer->Generate();
-		Generator::EmitStore(initialVal, alloc);
+		//initialVal = generator.LoadValueIfVariable(initializer->Generate(generator), initializer);
+		initialVal = initializer->Generate(generator);
+		generator.EmitStore(initialVal, alloc);
 
 		return alloc;
 	}
@@ -462,13 +422,13 @@ llvm::Value* VariableDefinitionExpression::Generate()
 		if (type->IsPointer())
 			initialVal = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
 		if (type->IsNumeric())
-			initialVal = Generator::GetNumericConstant(type->tag, 0);
+			initialVal = generator.GetNumericConstant(type->tag, 0);
 		if (type->IsArray())
 			return alloc;
 	}
 
-	initialVal = Generator::CastValueIfNecessary(initialVal, initializer->type, type, false, initializer.get());
-	Generator::EmitStore(initialVal, alloc);
+	initialVal = generator.CastValueIfNecessary(initialVal, initializer->type, type, false, initializer.get());
+	generator.EmitStore(initialVal, alloc);
 
 	return alloc;
 }
@@ -479,7 +439,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	
 	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
 	// If left is MemberAccess: objectValue = gepinst (ptr)
-	llvm::Value* objectValue = binary->left->Generate();
+	llvm::Value* objectValue = binary->left->Generate(*this);
 	Type* objectType = binary->left->type;
 
 	if (!objectType->IsStruct() && !objectType->IsArray())
@@ -506,7 +466,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 	//{
 	//	uint64_t size = objectType->raw->getArrayNumElements();
 	//	binary->type = Type::Get(TypeTag::UInt32);
-	//	return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, size, false));
+	//	return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*llvm_context->context), llvm::APInt(32, size, false));
 	//}
 
 	StructType* structType = objectType->IsStruct();
@@ -546,8 +506,6 @@ static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
 
 llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
 {
-	Module& module = s_Generator->module;
-
 	// Enum?
 	if (auto* leftVariable = ToExpr<VariableAccessExpression>(binary->left))
 	{
@@ -563,10 +521,10 @@ llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
 	return Generator::EmitStructureMemberAccess(binary);
 }
 
-llvm::Value* VariableAccessExpression::Generate()
+llvm::Value* VariableAccessExpression::Generate(Generator& generator)
 {
 	Value variable;
-	if (!s_CurrentScope->HasValue(name, &variable))
+	if (!generator.currentScope->HasValue(name, &variable))
 		throw CompileError(sourceLine, "identifier '{}' not declared in scope", name);
 
 	type = variable.type;
@@ -575,35 +533,35 @@ llvm::Value* VariableAccessExpression::Generate()
 
 llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
 {
-	return s_Builder->CreateStore(value, ptr);
+	return llvm_context->builder->CreateStore(value, ptr);
 }
 
 llvm::Value* Generator::EmitLoad(Type* result, llvm::Value* ptr)
 {
-	return s_Builder->CreateLoad(result->raw, ptr);
+	return llvm_context->builder->CreateLoad(result->raw, ptr);
 }
 
 llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
 {
-	return s_Builder->CreateBinOp((llvm::Instruction::BinaryOps)op, lhs, rhs);
+	return llvm_context->builder->CreateBinOp((llvm::Instruction::BinaryOps)op, lhs, rhs);
 }
 
 llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
 {
-	return s_Builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
+	return llvm_context->builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
 }
 
 llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize)
 {
-	return s_Builder->CreateAlloca(type->raw, arraySize);
+	return llvm_context->builder->CreateAlloca(type->raw, arraySize);
 }
 
-llvm::Value* ConstantDefinitionExpression::Generate()
+llvm::Value* ConstantDefinitionExpression::Generate(Generator& generator)
 {
 	return nullptr;
 }
 
-llvm::Value* CompoundExpression::Generate()
+llvm::Value* CompoundExpression::Generate(Generator& generator)
 {
 	if (type) {
 		if (StructType* structType = type->IsStruct()) {
@@ -611,53 +569,62 @@ llvm::Value* CompoundExpression::Generate()
 			//	// The type wasn't resolved
 			//}
 
-			llvm::Value* structPtr = Generator::EmitAlloca(structType);
-			Generator::InitializeStructMembersAggregate(structPtr, structType, this);
+			llvm::Value* structPtr = generator.EmitAlloca(structType);
+			generator.InitializeStructMembersAggregate(structPtr, structType, this);
 			return structPtr;
 		}
 	}
 
-	s_CurrentScope = s_CurrentScope->Deepen();
+	auto& builder = generator.llvm_context->builder;
+	auto& context = generator.llvm_context->context;
 
-	llvm::BasicBlock* previousBlock = s_Builder->GetInsertBlock();
-	llvm::BasicBlock* block = llvm::BasicBlock::Create(*s_Context, "entry", s_CurrentFunction.llvmFunction);
-	s_Builder->CreateBr(block);
-	s_Builder->SetInsertPoint(block);
+	generator.currentScope = generator.currentScope->Deepen();
+
+	llvm::Function* current_function = generator.llvm_context->current_function.function;
+
+	llvm::BasicBlock* previousBlock = builder->GetInsertBlock();
+	llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, "entry", current_function);
+	builder->CreateBr(block);
+	builder->SetInsertPoint(block);
 
 	for (auto& expr : children)
-		expr->Generate();
+		expr->Generate(generator);
 
-	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*s_Context, "end", s_CurrentFunction.llvmFunction);
-	s_Builder->CreateBr(endBlock);
-	s_Builder->SetInsertPoint(endBlock);
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "end", current_function);
+	builder->CreateBr(endBlock);
+	builder->SetInsertPoint(endBlock);
 
-	s_CurrentScope = s_CurrentScope->Increase();
+	generator.currentScope = generator.currentScope->Increase();
 
 	return block;
 }
 
-llvm::Value* BranchExpression::Generate()
+llvm::Value* BranchExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
 	// TODO: else if
 
-	llvm::BasicBlock* parentBlock = s_Builder->GetInsertBlock();
-	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*s_Context, "brend", s_CurrentFunction.llvmFunction, s_CurrentFunction.returnBlock);
+	auto& builder = generator.llvm_context->builder;
+	auto& context = generator.llvm_context->context;
+	auto& current_function = generator.llvm_context->current_function;
 
-	auto generateBranch = [endBlock, parentBlock](Branch& branch, const char* blockName)
+	llvm::BasicBlock* parentBlock = builder->GetInsertBlock();
+	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*context, "brend", current_function.function, current_function.return_block);
+
+	auto generateBranch = [&](Branch& branch, const char* blockName)
 	{
 		PROFILE_FUNCTION();
 
-		llvm::BasicBlock* block = llvm::BasicBlock::Create(*s_Context, blockName, s_CurrentFunction.llvmFunction, endBlock);
-		s_Builder->SetInsertPoint(block);
+		llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, blockName, current_function.function, endBlock);
+		builder->SetInsertPoint(block);
 
 		for (auto& expr : branch.body)
-			expr->Generate();
+			expr->Generate(generator);
 
 		if (!block->getTerminator())
-			s_Builder->CreateBr(endBlock);
-		s_Builder->SetInsertPoint(parentBlock);
+			builder->CreateBr(endBlock);
+		builder->SetInsertPoint(parentBlock);
 
 		return block;
 	};
@@ -668,47 +635,52 @@ llvm::Value* BranchExpression::Generate()
 	if (branches.size() > 1)
 		falseBlock = generateBranch(branches[branches.size() - 1], "bfalse");
 
-	llvm::Value* condition = Generator::LoadValueIfVariable(ifBranch.condition->Generate(), ifBranch.condition);
-	llvm::BranchInst* branchInst = s_Builder->CreateCondBr(condition, trueBlock, endBlock);
-	s_Builder->SetInsertPoint(endBlock);
+	llvm::Value* condition = generator.LoadValueIfVariable(ifBranch.condition->Generate(generator), ifBranch.condition);
+	llvm::BranchInst* branchInst = builder->CreateCondBr(condition, trueBlock, endBlock);
+	builder->SetInsertPoint(endBlock);
 
 	return branchInst;
 }
 
 static inline bool s_GeneratedTerminatorForCurrentFunction = false;
 
-llvm::Value* FunctionDefinitionExpression::Generate()
+llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+
+	auto& builder = generator.llvm_context->builder;
+	auto& context = generator.llvm_context->context;
 
 	type = prototype.ReturnType;
 	bool hasBody = body.size();
 	bool isVoid = type->tag == TypeTag::Void;
 
-	// Full definition for function
-	s_CurrentFunction.llvmFunction = s_Module->getFunction(prototype.Name);
+	auto& current_function = generator.llvm_context->current_function;
 
-	llvm::BasicBlock* previousBlock = s_Builder->GetInsertBlock();
+	// Full definition for function
+	current_function.function = generator.module.llvm_module->getFunction(prototype.Name);
+
+	llvm::BasicBlock* previousBlock = builder->GetInsertBlock();
 	llvm::BasicBlock* bodyBlock = nullptr;
 	
 	// Create block, deepen scope
 	if (hasBody)
 	{
-		s_CurrentScope = s_CurrentScope->Deepen(); // No point in scoping args if there's no body
+		generator.currentScope = generator.currentScope->Deepen(); // No point in scoping args if there's no body
 
-		bodyBlock = llvm::BasicBlock::Create(*s_Context, "entry", s_CurrentFunction.llvmFunction);
-		s_Builder->SetInsertPoint(bodyBlock);
+		bodyBlock = llvm::BasicBlock::Create(*context, "entry", current_function.function);
+		builder->SetInsertPoint(bodyBlock);
 
 		// Allocate return value
 		if (!isVoid)
-			s_CurrentFunction.returnValueAlloca = Generator::EmitAlloca(type);
+			current_function.return_value_alloca = generator.EmitAlloca(type);
 
-		s_CurrentFunction.returnBlock = llvm::BasicBlock::Create(*s_Context, "exit", s_CurrentFunction.llvmFunction);
+		current_function.return_block = llvm::BasicBlock::Create(*context, "exit", current_function.function);
 	}
 
 	// Set names for function args
 	uint32_t i = 0;
-	for (auto& arg : s_CurrentFunction.llvmFunction->args())
+	for (auto& arg : current_function.function->args())
 	{
 		auto& parameter = prototype.Parameters[i++];
 		arg.setName(parameter->name);
@@ -717,9 +689,9 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 			continue;
 
 		// Alloc arg
-		llvm::Value* alloc = Generator::EmitAlloca(parameter->type);
-		Generator::EmitStore(&arg, alloc);
-		s_CurrentScope->AddValue(parameter->name, { parameter->type, alloc });
+		llvm::Value* alloc = generator.EmitAlloca(parameter->type);
+		generator.EmitStore(&arg, alloc);
+		generator.currentScope->AddValue(parameter->name, { parameter->type, alloc });
 	}
 
 	// Gen body
@@ -728,23 +700,23 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		PROFILE_SCOPE("Generate function body");
 
 		for (auto& node : body)
-			node->Generate();
+			node->Generate(generator);
 
-		s_CurrentScope = s_CurrentScope->Increase();
+		generator.currentScope = generator.currentScope->Increase();
 
 		// Insert terminator
 		if (!s_GeneratedTerminatorForCurrentFunction)
-			s_Builder->CreateBr(s_CurrentFunction.returnBlock);
+			builder->CreateBr(current_function.return_block);
 
-		s_Builder->SetInsertPoint(s_CurrentFunction.returnBlock);
+		builder->SetInsertPoint(current_function.return_block);
 
 		// Terminator
 		if (isVoid) {
-			s_Builder->CreateRetVoid();
+			builder->CreateRetVoid();
 		}
 		else {
 			//Type* returnType = 
-			s_Builder->CreateRet(Generator::EmitLoad(type, s_CurrentFunction.returnValueAlloca));
+			builder->CreateRet(generator.EmitLoad(type, current_function.return_value_alloca));
 		}
 	}
 
@@ -752,22 +724,22 @@ llvm::Value* FunctionDefinitionExpression::Generate()
 		PROFILE_SCOPE("Verify function");
 
 		// Handle any errors in the function
-		if (llvm::verifyFunction(*s_CurrentFunction.llvmFunction, &llvm::errs()))
+		if (llvm::verifyFunction(*current_function.function, &llvm::errs()))
 		{
-			s_Module->print(llvm::errs(), nullptr);
-			s_CurrentFunction.llvmFunction->eraseFromParent();
+			generator.module.llvm_module->print(llvm::errs(), nullptr);
+			current_function.function->eraseFromParent();
 			throw CompileError(sourceLine, "function verification failed");
 		}
 	}
 
-	return s_CurrentFunction.llvmFunction;
+	return current_function.function;
 }
 
-llvm::Value* CastExpression::Generate()
+llvm::Value* CastExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
-	llvm::Value* value = LoadIfPointer(from->Generate(), from);
+	llvm::Value* value = LoadIfPointer(from->Generate(generator), from);
 
 	bool useTag = false;
 	if (type->IsPointer() || from->type->IsPointer())
@@ -780,17 +752,20 @@ llvm::Value* CastExpression::Generate()
 	return cast->Invoke(value, this);
 }
 
-llvm::Value* ReturnStatement::Generate()
+llvm::Value* ReturnStatement::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
-	type = Type::FromLLVM(s_CurrentFunction.llvmFunction->getReturnType());
+	auto& builder = generator.llvm_context->builder;
+	auto& current_function = generator.llvm_context->current_function;
+
+	type = Type::FromLLVM(current_function.function->getReturnType());
 
 	s_GeneratedTerminatorForCurrentFunction = true;
 
 	if (type->tag == TypeTag::Void)
 	{
-		s_Builder->CreateBr(s_CurrentFunction.returnBlock);
+		builder->CreateBr(current_function.return_block);
 		return nullptr;
 	}
 
@@ -801,15 +776,15 @@ llvm::Value* ReturnStatement::Generate()
 	{
 		if (StructType* structType = type->IsStruct())
 		{
-			llvm::Value* structPtr = Generator::EmitAlloca(type);
-			Generator::InitializeStructMembersAggregate(structPtr, structType, compound);
+			llvm::Value* structPtr = generator.EmitAlloca(type);
+			generator.InitializeStructMembersAggregate(structPtr, structType, compound);
 
-			returnValue = Generator::EmitLoad(type, structPtr);
+			returnValue = generator.EmitLoad(type, structPtr);
 		}
 		if (ArrayType* arrayType = type->IsArray())
 		{
-			llvm::Value* arrayPtr = Generator::CreateArrayAlloca(arrayType, compound->children);
-			returnValue = Generator::EmitLoad(arrayType, arrayPtr);
+			llvm::Value* arrayPtr = generator.CreateArrayAlloca(arrayType, compound->children);
+			returnValue = generator.EmitLoad(arrayType, arrayPtr);
 		}
 
 		ASSERT(returnValue);
@@ -817,21 +792,21 @@ llvm::Value* ReturnStatement::Generate()
 	else
 	{
 		// Everything else
-		returnValue = value->Generate();
-		returnValue = Generator::CastValueIfNecessary(Generator::LoadValueIfVariable(returnValue, value), value->type, type, false, this);
+		returnValue = value->Generate(generator);
+		returnValue = generator.CastValueIfNecessary(generator.LoadValueIfVariable(returnValue, value), value->type, type, false, this);
 	}
 
-	Generator::EmitStore(returnValue, s_CurrentFunction.returnValueAlloca);
-	s_Builder->CreateBr(s_CurrentFunction.returnBlock);
+	generator.EmitStore(returnValue, current_function.return_value_alloca);
+	builder->CreateBr(current_function.return_block);
 
 	return returnValue;
 }
 
-llvm::Value* FunctionCallExpression::Generate()
+llvm::Value* FunctionCallExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
-	Module& module = s_Generator->module;
+	Module& module = generator.module;
 
 	if (!module.DefinedFunctions.count(name)) {
 		throw CompileError(sourceLine, "undeclared function '{}'", name);
@@ -842,34 +817,36 @@ llvm::Value* FunctionCallExpression::Generate()
 	}
 	type = signature.Return;
 
-	llvm::Function* function = s_Module->getFunction(name);
+	llvm::Function* function = module.llvm_module->getFunction(name);
 
 	std::vector<llvm::Value*> argValues;
 	uint32_t i = 0;
 	for (auto& expr : arguments)
 	{
 		// Generate arg
-		llvm::Value* value = expr->Generate();
+		llvm::Value* value = expr->Generate(generator);
 		Type* argumentType = expr->type;
-		value = Generator::LoadValueIfVariable(value, expr);
+		value = generator.LoadValueIfVariable(value, expr);
 
 		// Type check
 		Type* expectedTy = signature.Parameters[i++];
-		value = Generator::CastValueIfNecessary(value, expr->type, expectedTy, false, expr.get());
+		value = generator.CastValueIfNecessary(value, expr->type, expectedTy, false, expr.get());
 			
 		argValues.push_back(value);
 	}
 
-	return s_Builder->CreateCall(function, argValues);
+	return generator.llvm_context->builder->CreateCall(function, argValues);
 }
 
-static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
+void Generator::ResolvePrimitiveType(Type& type, int possibleSourceLine)
 {
 	PROFILE_FUNCTION();
 
 	// Already resolved?
 	if (type.raw)
-		return;	
+		return;
+
+	auto& context = llvm_context->context;
 
 	if (type.IsPointer())
 	{
@@ -886,56 +863,56 @@ static void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1)
 	case TypeTag::UInt8:
 	case TypeTag::Int8:
 	{
-		type.raw = llvm::Type::getInt8Ty(*s_Context);
+		type.raw = llvm::Type::getInt8Ty(*context);
 		return;
 	}
 	case TypeTag::UInt16:
 	case TypeTag::Int16:
 	{
-		type.raw = llvm::Type::getInt16Ty(*s_Context);
+		type.raw = llvm::Type::getInt16Ty(*context);
 		return;
 	}
 	case TypeTag::UInt32:
 	case TypeTag::Int32:
 	{
-		type.raw = llvm::Type::getInt32Ty(*s_Context);
+		type.raw = llvm::Type::getInt32Ty(*context);
 		return;
 	}
 	case TypeTag::UInt64:
 	case TypeTag::Int64:
 	{
-		type.raw = llvm::Type::getInt64Ty(*s_Context);
+		type.raw = llvm::Type::getInt64Ty(*context);
 		return;
 	}
 	case TypeTag::Float32:
 	{
-		type.raw = llvm::Type::getFloatTy(*s_Context);
+		type.raw = llvm::Type::getFloatTy(*context);
 		return;
 	}
 	case TypeTag::Float64:
 	{
-		type.raw = llvm::Type::getDoubleTy(*s_Context);
+		type.raw = llvm::Type::getDoubleTy(*context);
 		return;
 	}
 	case TypeTag::Bool:
 	{
-		type.raw = llvm::Type::getInt1Ty(*s_Context);
+		type.raw = llvm::Type::getInt1Ty(*context);
 		return;
 	}
 	case TypeTag::String:
 	{
-		type.raw = llvm::PointerType::get(llvm::Type::getInt8Ty(*s_Context), 0u);
+		type.raw = llvm::PointerType::get(llvm::Type::getInt8Ty(*context), 0u);
 		return;
 	}
 	case TypeTag::Void:
 	{
-		type.raw = llvm::Type::getVoidTy(*s_Context);
+		type.raw = llvm::Type::getVoidTy(*context);
 		return;
 	}
 	}
 }
 
-static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
+void Generator::ResolveStructType(StructType& type, int possibleSourceLine)
 {
 	PROFILE_FUNCTION();
 
@@ -959,10 +936,10 @@ static void ResolveStructType(StructType& type, int possibleSourceLine = -1)
 		memberTypes.push_back(member->type->raw);
 	}
 
-	type.raw = llvm::StructType::create(*s_Context, memberTypes, type.name);
+	type.raw = llvm::StructType::create(*llvm_context->context, memberTypes, type.name);
 }
 
-static void ResolveArrayType(ArrayType& type, int possibleSourceLine = -1)
+void Generator::ResolveArrayType(ArrayType& type, int possibleSourceLine)
 {
 	PROFILE_FUNCTION();
 
@@ -978,7 +955,7 @@ static void ResolveArrayType(ArrayType& type, int possibleSourceLine = -1)
 
 static AliasType* IsTypeNameAnAlias(const std::string& name);
 
-static void ResolveType(Type& type, int line)
+void Generator::ResolveType(Type& type, int line)
 {
 	bool isNamedType = type.tag == TypeTag::Struct || type.tag == TypeTag::Alias;
 	AliasType* alias = nullptr;
@@ -1041,155 +1018,57 @@ static llvm::Type* FindReturnTypeFromBlock(std::vector<std::unique_ptr<Expressio
 	return nullptr;
 }
 
-static void VisitFunctionDefinition(FunctionDefinitionExpression* expr)
-{
-	FunctionPrototype& prototype = expr->prototype;
-	if (s_Module->getFunction(prototype.Name))
-		throw CompileError(expr->sourceLine, "redefinition of function '{}'", prototype.Name);
-
-	std::vector<Type*> parameterTypes(prototype.Parameters.size());
-	uint32_t i = 0;
-	for (auto& param : prototype.Parameters)
-		parameterTypes[i++] = param->type;
-	i = 0;
-	
-	// Keep track of all functions in module for function call expressions
-	s_Generator->module.DefinedFunctions[prototype.Name] = { prototype.ReturnType, parameterTypes };
-
-	// Param types
-	std::vector<llvm::Type*> llvmParameterTypes(prototype.Parameters.size());
-	for (auto& ty : parameterTypes)
-		llvmParameterTypes[i++] = ty->raw;
-
-	llvm::Type* returnType = prototype.ReturnType->raw;
-
-	llvm::FunctionType* functionType = llvm::FunctionType::get(returnType, llvmParameterTypes, false);
-	llvm::Function::Create(functionType, llvm::Function::ExternalLinkage, prototype.Name, *s_Module);
-}
-
-static void VisitEnumDefinition(EnumDefinitionExpression* expr)
-{
-	Module& module = s_Generator->module;
-	ASSERT(!module.DefinedEnums.count(expr->name));
-
-	Enumeration& enumeration = module.DefinedEnums[expr->name];
-	enumeration.name = expr->name;
-
-	AliasType* alias = expr->type->IsAlias();
-	ASSERT(alias);
-	enumeration.integralType = alias->aliasedType;
-
-	bool hasUsedDeducedValue = false;
-	uint64_t memberIndex = 0;
-	uint64_t memberValueTracker = 0; // idkf
-	for (auto& member : expr->members)
-	{
-		// Must be either a variable expr or binary expression (variable = constant)
-		if (auto variable = ToExpr<VariableAccessExpression>(member))
-		{
-			hasUsedDeducedValue = true;
-
-			const std::string& memberName = variable->name;
-
-			llvm::Value* value = value = Generator::GetNumericConstant(enumeration.integralType->tag, memberValueTracker++);
-			enumeration.members[memberName] = value;
-		}
-		else if (auto binary = ToExpr<BinaryExpression>(member))
-		{
-			if (hasUsedDeducedValue)
-				throw CompileError(binary->sourceLine, "within an enum, explicitly assigning values is only allowed before all deduced ones");
-
-			VariableAccessExpression* variable = nullptr;
-			if (!(variable = ToExpr<VariableAccessExpression>(binary->left)))
-				throw CompileError(binary->sourceLine, "expected identifier for enum member {}", memberIndex);
-
-			const std::string& memberName = variable->name;
-			llvm::Value* value = binary->right->Generate();
-			value = Generator::CastValueIfNecessary(value, binary->right->type, enumeration.integralType, false, binary->right.get());
-
-			enumeration.members[memberName] = value;
-		}
-		else {
-			throw CompileError(expr->sourceLine, "invalid member {} for enum '{}'", memberIndex, expr->name);
-		}
-
-		memberIndex++;
-	}
-}
-
-// TODO: FIX AND ABSTRACT
-static void VisitTopLevelDefinitions()
-{
-	PROFILE_FUNCTION();
-
-	for (auto& node : s_Generator->module.SyntaxTree->children)
-	{
-		switch (node->nodeType) {
-		case NodeType::FunctionDefinition: {
-			VisitFunctionDefinition(ToExpr<FunctionDefinitionExpression>(node));
-			break;
-		}
-		case NodeType::EnumDefinition: {
-			VisitEnumDefinition(ToExpr<EnumDefinitionExpression>(node));
-			break;
-		}
-		}
-
-		continue;
-	}
-}
-
 namespace CastFunctions
 {
 	// Int / int
 	static llvm::Value* SInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateZExtOrTrunc(integer, to);
+		return s_Generator->llvm_context->builder->CreateZExtOrTrunc(integer, to);
 	}
 	static llvm::Value* UInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateZExtOrTrunc(integer, to);
+		return s_Generator->llvm_context->builder->CreateZExtOrTrunc(integer, to);
 	}
 
 	static llvm::Value* SInteger_To_UInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateZExtOrTrunc(integer, to);
+		return s_Generator->llvm_context->builder->CreateZExtOrTrunc(integer, to);
 	}
 	static llvm::Value* UInteger_To_SInteger(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateZExtOrTrunc(integer, to);
+		return s_Generator->llvm_context->builder->CreateZExtOrTrunc(integer, to);
 		//return integer;
 	}
 
 	// Float / float
 	static llvm::Value* F32_To_F64(Cast&, llvm::Value* f32, llvm::Type* to) {
-		return s_Builder->CreateFPExt(f32, to);
+		return s_Generator->llvm_context->builder->CreateFPExt(f32, to);
 	}
 
 	static llvm::Value* F64_To_F32(Cast&, llvm::Value* f64, llvm::Type* to) {
-		return s_Builder->CreateFPTrunc(f64, to);
+		return s_Generator->llvm_context->builder->CreateFPTrunc(f64, to);
 	}
 
 	// Integer / floating point
 	static llvm::Value* SInteger_To_FP(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateSIToFP(integer, to);
+		return s_Generator->llvm_context->builder->CreateSIToFP(integer, to);
 	}
 	static llvm::Value* UInteger_To_FP(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateUIToFP(integer, to);
+		return s_Generator->llvm_context->builder->CreateUIToFP(integer, to);
 	}
 	static llvm::Value* FP_To_SInteger(Cast&, llvm::Value* f32, llvm::Type* to) {
-		return s_Builder->CreateFPToSI(f32, to);
+		return s_Generator->llvm_context->builder->CreateFPToSI(f32, to);
 	}
 	static llvm::Value* FP_To_UInteger(Cast&, llvm::Value* f32, llvm::Type* to) {
-		return s_Builder->CreateFPToUI(f32, to);
+		return s_Generator->llvm_context->builder->CreateFPToUI(f32, to);
 	}
 
 	// Ptr / int
 	static llvm::Value* Pointer_To_Integer(Cast&, llvm::Value* ptr, llvm::Type* to) {
-		return s_Builder->CreatePtrToInt(ptr, to);
+		return s_Generator->llvm_context->builder->CreatePtrToInt(ptr, to);
 	}
 	static llvm::Value* Integer_To_Pointer(Cast&, llvm::Value* integer, llvm::Type* to) {
-		return s_Builder->CreateIntToPtr(integer, to);
+		return s_Generator->llvm_context->builder->CreateIntToPtr(integer, to);
 	}
 
 	static llvm::Value* Pointer_To_Pointer(Cast&, llvm::Value* ptr, llvm::Type* to) {
-		return s_Builder->CreatePointerCast(ptr, to);
+		return s_Generator->llvm_context->builder->CreatePointerCast(ptr, to);
 	}
 }
 
@@ -1277,11 +1156,11 @@ static void InitPrimitiveCasts()
 	}
 }
 
-static void ResolveParsedTypes()
+void Generator::ResolveParsedTypes()
 {
 	PROFILE_FUNCTION();
 
-	for (auto& expr : s_Generator->module.SyntaxTree->children)
+	for (auto& expr : module.SyntaxTree->children)
 		expr->ResolveType();
 
 	for (auto& pair : Type::RegisteredTypes)
@@ -1320,7 +1199,7 @@ AliasType* Type::IsAlias()
 	if (AliasType::RegisteredTypes.count(name))
 	{
 		AliasType* alias = AliasType::RegisteredTypes[name];
-		ResolveType(*alias->aliasedType);
+		s_Generator->ResolveType(*alias->aliasedType);
 		return alias;
 	}
 }
@@ -1334,7 +1213,7 @@ AliasType* Type::IsAliasFor(Type* other)
 	if (AliasType::RegisteredTypes.count(name))
 	{
 		AliasType* alias = AliasType::RegisteredTypes[name];
-		ResolveType(*alias->aliasedType);
+		s_Generator->ResolveType(*alias->aliasedType);
 		
 		if (alias->aliasedType == other)
 			return alias;
@@ -1358,8 +1237,8 @@ StructType* Type::IsStruct()
 Type* Type::GetContainedType() const
 {
 	ASSERT(contained);
-	if (s_Context)
-		ResolveType(*contained);
+	if (s_Generator->llvm_context->context)
+		s_Generator->ResolveType(*contained);
 
 	return contained;
 }
@@ -1367,8 +1246,8 @@ Type* Type::GetContainedType() const
 Type* Type::GetPointerTo()
 {
 	Type* pointerTy = Type::Get(TypeTag::Pointer, this);
-	if (s_Context)
-		ResolveType(*pointerTy);
+	if (s_Generator->llvm_context->context)
+		s_Generator->ResolveType(*pointerTy);
 
 	return pointerTy;
 }
@@ -1376,8 +1255,8 @@ Type* Type::GetPointerTo()
 ArrayType* Type::GetArrayTypeOf(uint64_t count)
 {
 	ArrayType* arrayTy = ArrayType::Get(this, count);
-	if (s_Context)
-		ResolveArrayType(*arrayTy);
+	if (s_Generator->llvm_context->context)
+		s_Generator->ResolveArrayType(*arrayTy);
 
 	return arrayTy;
 }
@@ -1415,7 +1294,7 @@ ArrayType* Type::GetArrayTypeOf(uint64_t count)
 //	ModulePassManager modulePassManager = passBuilder.buildPerModuleDefaultPipeline(optLevel);
 //
 //	// Hells ya
-//	modulePassManager.run(*s_Module, moduleAnalysisManager);
+//	modulePassManager.run(*module.llvm_module, moduleAnalysisManager);
 //}
 
 Generator::Generator(Module& module)
@@ -1423,9 +1302,16 @@ Generator::Generator(Module& module)
 {
 	s_Generator = this;
 
-	s_Context = std::make_unique<llvm::LLVMContext>();
-	s_Module = std::make_unique<llvm::Module>(llvm::StringRef(), *s_Context);
-	s_Builder = std::make_unique<llvm::IRBuilder<>>(*s_Context);
+	llvm_context = new LLVM();
+	llvm_context->context = std::make_unique<llvm::LLVMContext>();
+	llvm_context->builder = std::make_unique<llvm::IRBuilder<>>(*llvm_context->context);
+
+	module.llvm_module = new llvm::Module(llvm::StringRef(), *llvm_context->context);
+}
+
+Generator::~Generator()
+{
+	delete module.llvm_module;
 }
 
 CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArguments& compilerArgs)
@@ -1440,11 +1326,11 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 		InitPrimitiveCasts();
 		VisitTopLevelDefinitions();
 
-		s_CurrentScope = new Scope();
+		currentScope = new Scope();
 		// Codegen module
 		for (auto& node : module.SyntaxTree->children)
 		{
-			node->Generate();
+			node->Generate(*this);
 		}
 
 		// Optimizations
@@ -1456,7 +1342,7 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 		
 		// Collect IR to string
 		llvm::raw_string_ostream stream(result.ir);
-		s_Module->print(stream, nullptr);
+		module.llvm_module->print(stream, nullptr);
 		result.ir = stream.str();
 
 		result.Succeeded = true;
@@ -1501,134 +1387,7 @@ bool Scope::HasValue(const std::string& name, Value* out, bool checkParents) con
 
 bool Generator::ScopeValue(const std::string& name, const Value& value)
 {
-	s_CurrentScope->AddValue(name, value);
+	currentScope->AddValue(name, value);
 
 	return true;
-}
-
-llvm::Value* LoopExpression::Generate()
-{
-	PROFILE_FUNCTION();
-
-	Type* indexType = Type::Get(TypeTag::Int32);
-
-	ArrayType* arrayType = nullptr;
-	llvm::Value* arrayPtr = nullptr;
-
-	Type* iteratorType = range->type;
-	llvm::Value* indexValuePtr = Generator::EmitAlloca(indexType);
-	llvm::Value* maximumIndex = nullptr;
-	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
-
-	s_CurrentScope = s_CurrentScope->Deepen();
-
-	bool iteratingArray = false;
-	BinaryExpression* rangeOperand = nullptr;
-	if (!IsRange(range, &rangeOperand))
-	{
-		arrayPtr = range->Generate();
-		bool isAlloca = llvm::isa<llvm::AllocaInst>(arrayPtr); // Not sure if this will always be true
-		ASSERT(isAlloca);
-
-		llvm::AllocaInst* alloc = llvm::cast<llvm::AllocaInst>(arrayPtr);
-		llvm::Type* llvmArrayType = alloc->getAllocatedType();
-		ASSERT(llvmArrayType->isArrayTy());
-		arrayType = Type::FromLLVM(llvmArrayType)->IsArray();
-		ASSERT(arrayType);
-
-		//if (!arrayType->isArrayTy())
-		//	throw CompileError(range->sourceLine, "expected an object of array type to iterate");
-		maximumIndex = Generator::GetNumericConstant(TypeTag::Int32, arrayType->count);
-
-		// Init iterator
-		iteratorType = arrayType->contained;
-		iteratorValuePtr = Generator::EmitAlloca(iteratorType);
-
-		// gep
-		llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-		llvm::Value* initialValue = Generator::EmitInBoundsGEP(arrayType, arrayPtr, { zeroIndex, zeroIndex });
-		initialValue = Generator::EmitLoad(arrayType->contained, initialValue);
-		Generator::EmitStore(initialValue, iteratorValuePtr);
-
-		llvm::Value* zero = Generator::GetNumericConstant(TypeTag::Int32, 0);
-		Generator::EmitStore(zero, indexValuePtr);
-
-		iteratingArray = true;
-
-		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, iteratorValuePtr });
-	}
-	else
-	{
-		auto minimum = rangeOperand->left->Generate();
-		auto maximum = rangeOperand->right->Generate();
-
-		// If reading variable, treat it as underlying value so the compiler does compiler stuff.
-		minimum = Generator::LoadValueIfVariable(minimum, rangeOperand->left);
-		maximum = Generator::LoadValueIfVariable(maximum, rangeOperand->right);
-		maximumIndex = maximum;
-
-		iteratorType = rangeOperand->left->type;
-		Generator::EmitStore(minimum, indexValuePtr);
-
-		s_CurrentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
-	}
-
-	// Blocks
-	llvm::BasicBlock* parentBlock = s_Builder->GetInsertBlock();
-	llvm::BasicBlock* endBlock = llvm::BasicBlock::Create(*s_Context, "for_end", s_CurrentFunction.llvmFunction, s_CurrentFunction.returnBlock);
-
-	llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(*s_Context, "for_cond", s_CurrentFunction.llvmFunction, endBlock);
-	llvm::BasicBlock* incrementBlock = llvm::BasicBlock::Create(*s_Context, "for_inc", s_CurrentFunction.llvmFunction, endBlock);
-	llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(*s_Context, "for_body", s_CurrentFunction.llvmFunction, endBlock);
-
-	// Condition block
-	//	If iterator < rangeMax: jump to body block, otherwise jump to end block
-	s_Builder->SetInsertPoint(conditionBlock);
-	{
-		llvm::Value* bShouldContinue = nullptr;
-
-		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
-		llvm::Type* iteratorType = iteratorVal->getType();
-
-		bShouldContinue = s_Builder->CreateICmpSLT(iteratorVal, maximumIndex);
-
-		s_Builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
-	}
-
-	// Increment block:
-	//	Increment iterator
-	//	Jump to condition block
-	s_Builder->SetInsertPoint(incrementBlock);
-	{
-		llvm::Value* iteratorVal = Generator::EmitLoad(indexType, indexValuePtr);
-		Generator::EmitStore(s_Builder->CreateAdd(iteratorVal, Generator::GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
-		s_Builder->CreateBr(conditionBlock);
-	}
-
-	// Body block:
-	//	Body
-	//	Jump to increment block
-	s_Builder->SetInsertPoint(bodyBlock);
-	{
-		if (iteratingArray)
-		{
-			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*s_Context), llvm::APInt(32, 0, false));
-			llvm::Value* currentElementPtr = Generator::EmitInBoundsGEP(arrayType, arrayPtr, 
-				{ zeroIndex, Generator::EmitLoad(indexType, indexValuePtr) });
-			Generator::EmitStore(Generator::EmitLoad(arrayType->contained, currentElementPtr), iteratorValuePtr);
-		}
-
-		for (auto& expr : body)
-			expr->Generate();
-
-		s_Builder->CreateBr(incrementBlock);
-	}
-
-	s_Builder->SetInsertPoint(parentBlock);
-	s_Builder->CreateBr(conditionBlock);
-	s_Builder->SetInsertPoint(endBlock);
-
-	s_CurrentScope = s_CurrentScope->Increase();
-
-	return endBlock;
 }

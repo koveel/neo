@@ -19,14 +19,14 @@ void Generator::InitializeStructMembersToDefault(llvm::Value* structPtr, StructT
 		auto& init = member->initializer;
 		llvm::Value* initialValue = nullptr;
 		if (!init) {
-			initialValue = Generator::GetNumericConstant(member->type->tag, 0);
+			initialValue = GetNumericConstant(member->type->tag, 0);
 		}
 		else {
-			initialValue = init->Generate();
+			initialValue = init->Generate(*this);
 		}
 
-		llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, i++);
-		Generator::EmitStore(initialValue, memberPtr);
+		llvm::Value* memberPtr = EmitStructGEP(type, structPtr, i++);
+		EmitStore(initialValue, memberPtr);
 	}
 }
 
@@ -77,12 +77,12 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 				throw CompileError(expr->sourceLine, "member '{}' appears multiple times in aggregate initializer. can only assign to it once", memberName.c_str());
 			initializedMembers.push_back(memberIndex);
 
-			llvm::Value* value = Generator::LoadValueIfVariable(binary->right->Generate(), binary->right);
-			llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, memberIndex);
+			llvm::Value* value = LoadValueIfVariable(binary->right->Generate(*this), binary->right);
+			llvm::Value* memberPtr = EmitStructGEP(type, structPtr, memberIndex);
 
-			value = Generator::CastValueIfNecessary(value, binary->right->type, type->members[memberIndex], false, binary->right.get());
+			value = CastValueIfNecessary(value, binary->right->type, type->members[memberIndex], false, binary->right.get());
 
-			Generator::EmitStore(value, memberPtr);
+			EmitStore(value, memberPtr);
 
 			usedNamedInitialization = true;
 		}
@@ -91,17 +91,17 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 			if (usedNamedInitialization)
 				throw CompileError(expr->sourceLine, "if using named initialization \"member = x\", must use it for all subsequent initializations");
 
-			llvm::Value* value = Generator::LoadValueIfVariable(expr->Generate(), expr);
+			llvm::Value* value = LoadValueIfVariable(expr->Generate(*this), expr);
 			uint32_t memberIndex = i++;
 
-			value = Generator::CastValueIfNecessary(value, expr->type, type->members[memberIndex], false, expr.get());
-			llvm::Value* memberPtr = Generator::EmitStructGEP(type, structPtr, memberIndex);
-			Generator::EmitStore(value, memberPtr);
+			value = CastValueIfNecessary(value, expr->type, type->members[memberIndex], false, expr.get());
+			llvm::Value* memberPtr = EmitStructGEP(type, structPtr, memberIndex);
+			EmitStore(value, memberPtr);
 		}
 	}
 }
 
-llvm::Value* StructDefinitionExpression::Generate()
+llvm::Value* StructDefinitionExpression::Generate(Generator& generator)
 {
 	// We already resolved the struct type and its members but here we just flag an error if a member type if unresolved
 

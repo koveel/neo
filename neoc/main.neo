@@ -8,30 +8,17 @@ Food :: enum
     Cake,
 }
 
-Tag :: struct
-{
-    name: string;
-    var: i32;
-}
-
-Player :: struct
-{
-    age := 0;
-    tag: Tag;
-}
-
 main :: () -> i32
 {
-    player := Player {
-        18,
-        Tag {
-            "Player 1",
-            5,
-        }
+    msgs := [] {
+        "One",
+        "Two",
     };
-    for i: 0..player.tag.var {
-        printf("loop\n");
+
+    for msg: msgs {
+        printf(msg);
+        printf("\n");
     }
 
-    return 0;
+    return 2;
 }

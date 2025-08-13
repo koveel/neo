@@ -273,7 +273,7 @@ static std::unique_ptr<Expression> ParseLine(TokenType expectedEndline = TokenTy
 	bool expectEndingToken = true;
 	Token* token = &parser->lexer->currentToken;
 	int priority = -1;
-
+	
 	if (token->type == TokenType::For || token->type == TokenType::If) {
 		priority = 100;
 	}

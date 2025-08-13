@@ -1,6 +1,6 @@
 #pragma once
 
-#include "Type.h"
+#include "Tree.h"
 #include "Parser.h"
 #include "Scope.h"
 #include "CmdLine/CommandLineArguments.h"
@@ -21,39 +21,56 @@ class Generator
 {
 public:
 	Module& module;
+	Scope* currentScope = nullptr;
+
+	struct LLVM* llvm_context;
 public:
 	Generator(Module& module);
-
-	// Instructions
-	static llvm::Value* EmitStore(llvm::Value* value, llvm::Value* ptr);
-	static llvm::Value* EmitLoad(Type* resultType, llvm::Value* ptr);
-	static llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
-	static llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
-
-	static llvm::Value* EmitAlloca(Type* type, llvm::Value* arraySize = nullptr);
-
-	static llvm::Value* EmitSubscript(BinaryExpression* expression);
-	static llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);
-	static llvm::Value* HandleMemberAccessExpression(BinaryExpression* expression);
-
-	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, Expression* expr);
-	static llvm::Value* LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr);
-	static llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
-
-	static llvm::Value* EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex);
-	static llvm::Value* EmitInBoundsGEP(Type* arrayType, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
-
-	static llvm::Value* GetNumericConstant(TypeTag tag, int64_t value);
-
-	// Struct
-	static void InitializeStructMembersAggregate(llvm::Value* structPtr, StructType* type, CompoundExpression* initializer);
-	static void InitializeStructMembersToDefault(llvm::Value* structPtr, StructType* type);
-
-	// Array
-	static llvm::Value* CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements);
-
-	// Values
-	static bool ScopeValue(const std::string& name, const Value& value);
+	~Generator();
 
 	CompileResult Generate(ParseResult& parseResult, const CommandLineArguments& compilerArgs);
+
+	// Instructions
+	llvm::Value* EmitStore(llvm::Value* value, llvm::Value* ptr);
+	llvm::Value* EmitLoad(Type* resultType, llvm::Value* ptr);
+	llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
+	llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
+
+	llvm::Value* EmitAlloca(Type* type, llvm::Value* arraySize = nullptr);
+
+	llvm::Value* EmitSubscript(BinaryExpression* expression);
+	llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);
+	llvm::Value* HandleMemberAccessExpression(BinaryExpression* expression);
+
+	llvm::Value* LoadValueIfVariable(llvm::Value* generated, Expression* expr);
+	llvm::Value* LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr);
+	llvm::Value* CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source);
+
+	llvm::Value* EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex);
+	llvm::Value* EmitInBoundsGEP(Type* arrayType, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices);
+
+	llvm::Value* GetNumericConstant(TypeTag tag, int64_t value);
+
+	// Struct
+	void InitializeStructMembersAggregate(llvm::Value* structPtr, StructType* type, CompoundExpression* initializer);
+	void InitializeStructMembersToDefault(llvm::Value* structPtr, StructType* type);
+
+	// Array
+	llvm::Value* CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements);
+
+	// Values
+	bool ScopeValue(const std::string& name, const Value& value);
+private:
+	void ResolveParsedTypes();
+	void ResolveType(Type&, int line = -1);
+	void ResolvePrimitiveType(Type& type, int possibleSourceLine = -1);
+	void ResolveStructType(StructType& type, int possibleSourceLine = -1);
+	void ResolveArrayType(ArrayType& type, int possibleSourceLine = -1);
+
+	// visiting.cpp
+	void VisitTopLevelDefinitions();
+	void VisitFunctionDefinition(FunctionDefinitionExpression* expr);
+	void VisitEnumDefinition(EnumDefinitionExpression* expr);
+
+	friend class Type;
 };

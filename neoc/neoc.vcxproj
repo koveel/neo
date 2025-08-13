@@ -103,6 +103,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
+    <ClInclude Include="src\codegen\GeneratorContext.h" />
     <ClInclude Include="src\Emitter.h" />
     <ClInclude Include="src\Error.h" />
     <ClInclude Include="src\Lexer.h" />
@@ -123,6 +124,7 @@
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp" />
     <ClCompile Include="src\CmdLine\Main.cpp" />
+    <ClCompile Include="src\codegen\Visiting.cpp" />
     <ClCompile Include="src\Emitter.cpp" />
     <ClCompile Include="src\Error.cpp" />
     <ClCompile Include="src\Lexer.cpp" />
