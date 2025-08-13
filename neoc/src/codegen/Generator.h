@@ -36,7 +36,7 @@ public:
 	llvm::Value* EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 	llvm::Value* EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs);
 
-	llvm::Value* EmitAlloca(Type* type, llvm::Value* arraySize = nullptr);
+	llvm::Value* EmitAlloca(Type* type, llvm::Value* arraySize = nullptr, const std::string& debug_name = "");
 
 	llvm::Value* EmitSubscript(BinaryExpression* expression);
 	llvm::Value* EmitStructureMemberAccess(BinaryExpression* expression);

@@ -13,9 +13,14 @@ main :: () -> i32
     msgs := [] {
         "One",
         "Two",
+        "Three",
     };
 
+    it := 0;
     for msg: msgs {
+        if it++ == 0
+            continue;
+
         printf(msg);
         printf("\n");
     }

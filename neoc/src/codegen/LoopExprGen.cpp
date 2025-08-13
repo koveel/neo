@@ -10,16 +10,23 @@
 #include "Generator.h"
 #include "GeneratorContext.h"
 
-//static struct
-//{
-//
-//} s_CurrentLoop;
-
 llvm::Value* LoopControlFlowExpression::Generate(Generator& generator)
 {
-	// TODO
+	// branchless programming = 100x programmer
+	static llvm::Value*(*create[2])(Generator&) = {
+		[](Generator& gen) -> llvm::Value* { // continue
+			auto& loop = gen.llvm_context->current_loop;
+			return gen.llvm_context->builder->CreateBr(loop.condition_block);
+		},
+		[](Generator& gen) -> llvm::Value* { // break
+			auto& loop = gen.llvm_context->current_loop;
+			return gen.llvm_context->builder->CreateBr(loop.end_block);
+		},
+	};
 
-	return nullptr;
+	generator.currentScope->contains_terminator = true;
+
+	return create[(uint32_t)controlType](generator);
 }
 
 static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
@@ -48,7 +55,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	llvm::Value* indexValuePtr = generator.EmitAlloca(indexType);
 	llvm::Value* maximumIndex = nullptr;
 	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
-
+		
 	generator.currentScope = generator.currentScope->Deepen();
 
 	bool iteratingArray = false;
@@ -71,7 +78,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 
 		// Init iterator
 		iteratorType = arrayType->contained;
-		iteratorValuePtr = generator.EmitAlloca(iteratorType);
+		iteratorValuePtr = generator.EmitAlloca(iteratorType, nullptr, "it");
 
 		// gep
 		llvm::Value* zero = generator.GetNumericConstant(TypeTag::Int32, 0);
@@ -104,6 +111,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	auto& context = generator.llvm_context->context;
 	auto& builder = generator.llvm_context->builder;
 
+	auto& loop_context = generator.llvm_context->current_loop;
 	auto& current_function = generator.llvm_context->current_function;
 	auto& llvm_current_function = current_function.function;
 
@@ -114,18 +122,18 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	llvm::BasicBlock* conditionBlock = llvm::BasicBlock::Create(*context, "for_cond", llvm_current_function, endBlock);
 	llvm::BasicBlock* incrementBlock = llvm::BasicBlock::Create(*context, "for_inc", llvm_current_function, endBlock);
 	llvm::BasicBlock* bodyBlock = llvm::BasicBlock::Create(*context, "for_body", llvm_current_function, endBlock);
+	
+	loop_context.end_block = endBlock;
+	loop_context.condition_block = incrementBlock;
 
 	// Condition block
 	//	If iterator < rangeMax: jump to body block, otherwise jump to end block
 	builder->SetInsertPoint(conditionBlock);
 	{
-		llvm::Value* bShouldContinue = nullptr;
-
 		llvm::Value* iteratorVal = generator.EmitLoad(indexType, indexValuePtr);
 		llvm::Type* iteratorType = iteratorVal->getType();
 
-		bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximumIndex);
-
+		llvm::Value* bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximumIndex);
 		builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
 	}
 
@@ -133,17 +141,10 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	//	Increment iterator
 	//	Jump to condition block
 	builder->SetInsertPoint(incrementBlock);
-	{
+	{	
 		llvm::Value* iteratorVal = generator.EmitLoad(indexType, indexValuePtr);
 		generator.EmitStore(builder->CreateAdd(iteratorVal, generator.GetNumericConstant(TypeTag::Int32, 1), "inc"), indexValuePtr);
-		builder->CreateBr(conditionBlock);
-	}
 
-	// Body block:
-	//	Body
-	//	Jump to increment block
-	builder->SetInsertPoint(bodyBlock);
-	{
 		if (iteratingArray)
 		{
 			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, 0, false));
@@ -152,8 +153,20 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 			generator.EmitStore(generator.EmitLoad(arrayType->contained, currentElementPtr), iteratorValuePtr);
 		}
 
-		for (auto& expr : body)
+		builder->CreateBr(conditionBlock);
+	}
+
+	// Body block:
+	//	Body
+	//	Jump to increment block
+	builder->SetInsertPoint(bodyBlock);
+	{
+		for (auto& expr : body) {
 			expr->Generate(generator);
+
+			if (generator.currentScope->contains_terminator)
+				break;
+		}
 
 		builder->CreateBr(incrementBlock);
 	}

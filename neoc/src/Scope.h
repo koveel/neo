@@ -27,12 +27,8 @@ public:
 	Scope* Increase() const { return parentScope; }
 public:
 	Scope* parentScope = nullptr;
+	bool contains_terminator = false; // return / break / continue
 private:
-	// Types
-	// Functions
-	// Structures
-	// Variables
-
 	uint32_t depth = 0;
 	std::unordered_map<std::string, Value> values;
 };

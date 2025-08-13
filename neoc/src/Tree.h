@@ -198,7 +198,8 @@ struct BranchExpression : public Expression
 
 enum class LoopControlFlowType
 {
-	Break, Continue
+	Continue = 0,
+	Break = 1
 };
 
 // Fck this

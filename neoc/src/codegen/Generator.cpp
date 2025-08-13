@@ -30,8 +30,15 @@ llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* 
 
 	if (auto unary = ToExpr<UnaryExpression>(expr))
 	{
-		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
+		switch (unary->unaryType)
+		{
+		case UnaryType::AddressOf:
+		case UnaryType::PrefixIncrement:
+		case UnaryType::PrefixDecrement:
+		case UnaryType::PostfixIncrement:
+		case UnaryType::PostfixDecrement:
 			return generated;
+		}
 	}
 	if (auto cast = ToExpr<CastExpression>(expr))
 	{
@@ -41,7 +48,7 @@ llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* 
 
 	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
 		return generated;
-
+		
 	return EmitLoad(expr->type, generated);
 }
 
@@ -220,7 +227,9 @@ llvm::Value* StringExpression::Generate(Generator& generator)
 		stringExpr += c;
 	}
 
-	return generator.llvm_context->builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module);
+	auto& builder = generator.llvm_context->builder;
+
+	return builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module);
 }
 
 llvm::Value* UnaryExpression::Generate(Generator& generator)
@@ -258,16 +267,16 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		llvm::Value* loaded = generator.EmitLoad(type, value);
 		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return newly incremented value
-		return generator.EmitLoad(type->contained, value);
+		return generator.EmitLoad(type, value);
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		llvm::Value* loaded = generator.EmitLoad(type, value);
 		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		// Return value before increment
@@ -275,14 +284,14 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		llvm::Value* loaded = generator.EmitLoad(type, value);
 		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
-		return generator.EmitLoad(type->contained, value);
+		return generator.EmitLoad(type, value);
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = generator.EmitLoad(type->contained, value);
+		llvm::Value* loaded = generator.EmitLoad(type, value);
 		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(operand->type->tag, 1)), value);
 
 		return loaded;
@@ -551,9 +560,9 @@ llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, ll
 	return llvm_context->builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
 }
 
-llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize)
+llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize, const std::string& debug_name)
 {
-	return llvm_context->builder->CreateAlloca(type->raw, arraySize);
+	return llvm_context->builder->CreateAlloca(type->raw, arraySize, debug_name);
 }
 
 llvm::Value* ConstantDefinitionExpression::Generate(Generator& generator)
@@ -616,6 +625,8 @@ llvm::Value* BranchExpression::Generate(Generator& generator)
 	{
 		PROFILE_FUNCTION();
 
+		generator.currentScope = generator.currentScope->Deepen();
+			
 		llvm::BasicBlock* block = llvm::BasicBlock::Create(*context, blockName, current_function.function, endBlock);
 		builder->SetInsertPoint(block);
 
@@ -625,6 +636,8 @@ llvm::Value* BranchExpression::Generate(Generator& generator)
 		if (!block->getTerminator())
 			builder->CreateBr(endBlock);
 		builder->SetInsertPoint(parentBlock);
+
+		generator.currentScope = generator.currentScope->Increase();
 
 		return block;
 	};

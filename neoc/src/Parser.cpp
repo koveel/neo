@@ -1142,12 +1142,18 @@ static BranchExpression::Branch ParseBranch(uint32_t branchType)
 		"if", "else", "else if"
 	};
 	const char* branchKeyword = branchKeywords[branchType];
+	Token* current = &parser->current;
+
+	if (current->type == TokenType::LeftParen)
+		Advance();
 
 	// 'else' has no condition
 	if (branchType != 1)
 		branch.condition = ParseExpression(-1);
 
-	Token* current = &parser->current;
+	if (current->type == TokenType::RightParen)
+		Advance();
+
 	if (current->type != TokenType::LeftCurlyBracket)
 	{
 		branch.body.push_back(ParseLine());
