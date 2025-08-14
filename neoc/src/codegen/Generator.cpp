@@ -24,6 +24,17 @@ static void Warn(int line, const std::string& message, Args&&... args)
 	ResetConsoleColor();
 }
 
+// TODO: fix error shit
+// make these errors like parser errors
+template<typename... Args>
+static void Assert(bool condition, const char* fmt, Args&&... args)
+{
+	if (condition)
+		return;
+
+	throw CompileError(0, fmt, std::forward<Args>(args)...);
+}
+
 llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
 {
 	PROFILE_FUNCTION();
@@ -95,13 +106,12 @@ llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* t
 		return v;
 
 	Cast* cast = Cast::IsValid(from, to);
-	if (!cast)
-		throw CompileError(source->sourceLine, "cannot cast from '{}' to '{}'", from->GetName(), to->GetName());
+	Assert(cast, "cannot cast from '{}' to '{}'", from->GetName(), to->GetName());
 
 	if (isExplicit || cast->implicit)
 		return cast->Invoke(v);
 
-	throw CompileError(source->sourceLine, "cannot implicitly cast from '{}' to '{}'", from->GetName(), to->GetName());
+	Assert(false, "cannot implicitly cast from '{}' to '{}'", from->GetName(), to->GetName());
 }
 
 llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex)
@@ -200,7 +210,7 @@ llvm::Value* PrimaryExpression::Generate(Generator& generator)
 		return llvm::ConstantInt::getBool(*context, value.b32);
 	}
 
-	throw CompileError(sourceLine, "invalid type for primary expression");
+	Assert(false, "invalid type for primary expression");
 }
 
 llvm::Value* StringExpression::Generate(Generator& generator)
@@ -306,7 +316,7 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 			return builder->CreateFNeg(value);
 		}
 
-		throw CompileError(sourceLine, "invalid operand for unary negation (-), operand must be numeric");
+		Assert(false, "invalid operand for unary negation (-), operand must be numeric");
 	}
 	case UnaryType::PrefixIncrement:
 	{
@@ -347,8 +357,6 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	}
 	case UnaryType::Deref:
 	{
-		type = type->GetContainedType();
-
 		bool load = true;
 		if (CastExpression* cast = ToExpr<CastExpression>(operand))
 		{
@@ -356,7 +364,9 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
-		return load ? generator.EmitLoad(type, value) : value;
+		llvm::Value* result = load ? generator.EmitLoad(type, value) : value;
+		type = type->GetContainedType();
+		return result;
 	}
 	}
 
@@ -370,15 +380,15 @@ llvm::Value* Generator::EmitSubscript(BinaryExpression* binary)
 	llvm::Value* zeroIndex = llvm::ConstantInt::get(*llvm_context->context, llvm::APInt(32, 0, false));
 
 	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(*this), binary->right);
-	if (!indexVal->getType()->isIntegerTy())
-		throw CompileError(binary->sourceLine, "expected integer value for array index");
+	bool isIndexInteger = indexVal->getType()->isIntegerTy();
+
+	Assert(isIndexInteger, "expected integer value for array index");
 
 	llvm::Value* arrayPtr = binary->left->Generate(*this); // todo: check this shit
 	binary->type = binary->left->type->GetContainedType();
 
 	// Should be doing this at the start of this function
-	if (!binary->left->type->IsArray())
-		throw CompileError(binary->sourceLine, "expected subscript target to be of array type");
+	Assert(binary->left->type->IsArray(), "expected subscript target to be of array type");
 
 	return llvm_context->builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
 }
@@ -419,9 +429,7 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 				aggregateInitializer = compound;
 				aggregateInitialization = true;
 
-				if (!compound->type) {
-					throw CompileError(compound->sourceLine, "expected aggregate initializer to be typed");
-				}
+				Assert(compound->type, "expected aggregate initializer to be typed");
 
 				if (ArrayType* compoundArrayType = compound->type->IsArray()) // [...]
 				{
@@ -497,20 +505,15 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 
 	if (!objectType->IsStruct() && !objectType->IsArray())
 	{
-		// This is where u would have used -> instead of . (if I wanted that stupid feature)
-		if (objectType->IsPointer())
-		{
-			objectValue = EmitLoad(objectType, objectValue);
-			objectType = objectType->GetContainedType();
-		}
-		else
-			throw CompileError(binary->sourceLine, "can't access member of non-struct type or pointer to struct type");
+		Assert(objectType->IsPointer(), "can't access member of non-struct type or pointer to struct type");
+
+		objectValue = EmitLoad(objectType, objectValue);
+		objectType = objectType->GetContainedType();
 	}
 
 	// rhs should always be variable access expr
-	VariableAccessExpression* memberExpr = nullptr;
-	if (!(memberExpr = ToExpr<VariableAccessExpression>(binary->right)))
-		throw CompileError(binary->sourceLine, "expected variable access expression for rhs of member access");
+	VariableAccessExpression* memberExpr = ToExpr<VariableAccessExpression>(binary->right);
+	Assert(memberExpr, "expected variable access expression for rhs of member access");
 
 	const std::string& targetMemberName = memberExpr->name;
 	
@@ -537,8 +540,7 @@ llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
 			break;
 		}
 	}
-	if (memberIndex == -1)
-		throw CompileError(binary->sourceLine, "'{}' not a member of struct '{}'", memberExpr->name, objectType->GetName());
+	Assert(memberIndex >= 0, "'{}' not a member of struct '{}'", memberExpr->name, objectType->GetName());
 
 	llvm::Value* memberPtr = EmitStructGEP(structType, objectValue, (uint32_t)memberIndex);
 	return memberPtr;
@@ -550,9 +552,7 @@ static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
 	auto* access = ToExpr<VariableAccessExpression>(rhs);
 
 	const std::string& memberName = access->name;
-	if (!target.members.count(memberName)) {
-		throw CompileError(rhs->sourceLine, "enum '{}' does not have member '{}'", target.name, memberName);
-	}
+	Assert(target.members.count(memberName), "enum '{}' does not have member '{}'", target.name, memberName);
 
 	return target.members[memberName];
 }
@@ -577,8 +577,7 @@ llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
 llvm::Value* VariableAccessExpression::Generate(Generator& generator)
 {
 	Value variable;
-	if (!generator.currentScope->HasValue(name, &variable))
-		throw CompileError(sourceLine, "identifier '{}' not declared in scope", name);
+	Assert(generator.currentScope->HasValue(name, &variable), "identifier '{}' not declared in scope", name);
 
 	type = variable.type;
 	return variable.raw;
@@ -699,8 +698,6 @@ llvm::Value* BranchExpression::Generate(Generator& generator)
 	return branchInst;
 }
 
-static inline bool s_GeneratedTerminatorForCurrentFunction = false;
-
 llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
@@ -759,12 +756,11 @@ llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 		for (auto& node : body)
 			node->Generate(generator);
 
-		generator.currentScope = generator.currentScope->Increase();
-
 		// Insert terminator
-		if (!s_GeneratedTerminatorForCurrentFunction)
+		if (!generator.currentScope->contains_terminator)
 			builder->CreateBr(current_function.return_block);
 
+		generator.currentScope = generator.currentScope->Increase();
 		builder->SetInsertPoint(current_function.return_block);
 
 		// Terminator
@@ -785,7 +781,7 @@ llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 		{
 			generator.module.llvm_module->print(llvm::errs(), nullptr);
 			current_function.function->eraseFromParent();
-			throw CompileError(sourceLine, "function verification failed");
+			Assert(false, "function verification failed");
 		}
 	}
 
@@ -803,8 +799,7 @@ llvm::Value* CastExpression::Generate(Generator& generator)
 		useTag = true;
 
 	Cast* cast = useTag ? Cast::IsValid(from->type->tag, type->tag) : Cast::IsValid(from->type, type);
-	if (!cast)
-		throw CompileError(sourceLine, "cannot cast from '{}' to '{}'", from->type->GetName(), type->GetName());
+	Assert(cast, "cannot cast from '{}' to '{}'", from->type->GetName(), type->GetName());
 
 	return cast->Invoke(value, this);
 }
@@ -818,7 +813,7 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 
 	type = Type::FromLLVM(current_function.function->getReturnType());
 
-	s_GeneratedTerminatorForCurrentFunction = true;
+	generator.currentScope->contains_terminator = true;
 
 	if (type->tag == TypeTag::Void)
 	{
@@ -826,6 +821,7 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 		return nullptr;
 	}
 
+	Assert(value.get(), "expected return statement to express a value of type '{}'", type->GetName());
 	llvm::Value* returnValue = nullptr;
 
 	// In-place aggregate initialization
@@ -865,14 +861,11 @@ llvm::Value* FunctionCallExpression::Generate(Generator& generator)
 	PROFILE_FUNCTION();
 
 	Module& module = generator.module;
+	Assert(module.DefinedFunctions.count(name), "undeclared function '{}'", name);
 
-	if (!module.DefinedFunctions.count(name)) {
-		throw CompileError(sourceLine, "undeclared function '{}'", name);
-	}
 	FunctionSignature& signature = module.DefinedFunctions[name];
-	if (signature.Parameters.size() != arguments.size()) {
-		throw CompileError(sourceLine, "expected {} arguments for call to '{}' but got {}", signature.Parameters.size(), name, arguments.size());
-	}
+	bool argCountMatch = signature.Parameters.size() == arguments.size();
+	Assert(argCountMatch, "expected {} arguments for call to '{}' but got {}", signature.Parameters.size(), name, arguments.size());
 	type = signature.Return;
 
 	llvm::Function* function = module.llvm_module->getFunction(name);

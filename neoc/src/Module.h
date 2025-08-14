@@ -18,6 +18,8 @@ public:
 	std::unordered_map<std::string, FunctionSignature> DefinedFunctions;
 	std::unordered_map<std::string, Enumeration> DefinedEnums;
 
+	//std::unordered_map<std::
+
 	//std::unique_ptr<llvm::Module> llvm_module;
 	llvm::Module* llvm_module = nullptr;
 };

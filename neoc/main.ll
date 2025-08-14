@@ -3,6 +3,8 @@
 
 declare void @printf(ptr)
 
+declare ptr @food_to_string(i32)
+
 define void @print(ptr %msg) {
 entry:
   %0 = alloca ptr, align 8
@@ -34,15 +36,21 @@ entry:
   %8 = getelementptr inbounds [6 x i32], ptr %1, i32 0, i32 0
   %9 = alloca ptr, align 8
   store ptr %8, ptr %9, align 8
-  %10 = getelementptr inbounds [6 x i32], ptr %1, i32 0, i32 2
-  %11 = load ptr, ptr %9, align 8
-  %12 = load i32, ptr %10, align 4
-  %13 = getelementptr inbounds i32, ptr %11, i32 %12
-  %14 = load i32, ptr %13, align 4
-  store i32 %14, ptr %0, align 4
+  %10 = load ptr, ptr %9, align 8
+  %11 = getelementptr inbounds i32, ptr %10, i32 1
+  store ptr %11, ptr %9, align 8
+  %12 = load ptr, ptr %9, align 8
+  %13 = getelementptr inbounds i32, ptr %12, i32 1
+  store ptr %13, ptr %9, align 8
+  %14 = load ptr, ptr %9, align 8
+  %15 = getelementptr inbounds i32, ptr %14, i32 1
+  store ptr %15, ptr %9, align 8
+  %16 = load ptr, ptr %9, align 8
+  %17 = load i32, ptr %16, align 4
+  store i32 %17, ptr %0, align 4
   br label %exit
 
 exit:                                             ; preds = %entry
-  %15 = load i32, ptr %0, align 4
-  ret i32 %15
+  %18 = load i32, ptr %0, align 4
+  ret i32 %18
 }
