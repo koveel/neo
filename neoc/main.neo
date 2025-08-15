@@ -1,4 +1,4 @@
-printf :: (msg: string);
+printf :: (msg: *i8);
 
 Food :: enum
 {
@@ -8,7 +8,7 @@ Food :: enum
     Cake,
 }
 
-food_to_string :: (food: Food) -> string
+food_to_string :: (food: Food) -> i64
 {
     // switch food
     // {
@@ -21,7 +21,7 @@ food_to_string :: (food: Food) -> string
     // }
 }
 
-print :: (msg: string)
+print :: (msg: *i8)
 {
     printf(msg);
     printf("\n");
@@ -29,13 +29,25 @@ print :: (msg: string)
 
 main :: () -> i32
 {
-    nums := [] {
-        0, 1, 0, 3, 4, 5
+    msgs := [] {
+        "One",
+        "Two",
+        "Seventeenthousand",
     };
+
+    // 
+    i := msgs[0];
+    msgs[0] = 10;
+
+    pi := @i;
+
+    second := @msgs[0];
+    print(*(second + 1));
     
-    second := @nums[0];
-    second++;
-    second++;
-    second++;
-    return *(second);
+    nums := [] {
+        0, 1, 2, 3, 4,
+    };
+
+    first := @nums[0];
+    return *(first + 1);
 }

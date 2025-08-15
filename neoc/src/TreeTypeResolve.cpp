@@ -95,6 +95,6 @@ void ReturnStatement::ResolveType()
 	if (!value)
 		return;
 
-	value->ResolveType();
-	type = value->type;
+	//value->ResolveType();
+	//type = value->type;
 }

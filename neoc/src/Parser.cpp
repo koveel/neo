@@ -546,7 +546,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 			Advance();
 
 			auto primary = MakeExpression<StringExpression>();
-			primary->type = Type::Get(TypeTag::String);
+			primary->type = Type::Get(TypeTag::Pointer, Type::Get(TypeTag::Int8));
 
 			primary->value.start = token.start;
 			primary->value.length = token.length;

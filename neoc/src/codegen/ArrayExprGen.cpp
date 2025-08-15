@@ -7,7 +7,7 @@
 
 #include "CodegenUtils.h"
 
-llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements)
+llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vector<std::unique_ptr<Expression>>& elements, const char* debug_name)
 {
 	PROFILE_FUNCTION();
 
@@ -24,7 +24,7 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 		values.push_back(element);
 	}
 
-	llvm::Value* alloc = EmitAlloca(arrayType);
+	llvm::Value* alloc = EmitAlloca(arrayType, nullptr, debug_name);
 	StructType* containedStructType = arrayType->contained->IsStruct();
 
 	// initialize elements (store into gep)

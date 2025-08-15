@@ -165,7 +165,7 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 	if (binaryType == BinaryType::MemberAccess)
 		return generator.HandleMemberAccessExpression(this);
 	if (binaryType == BinaryType::Subscript)
-		return generator.EmitSubscript(this);
+		return generator.EmitSubscript(this, "arr.idx");
 
 	llvm::Value* lhs = left->Generate(generator);
 	llvm::Value* rhs = right->Generate(generator);
@@ -173,8 +173,10 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 
 	type = left->type;
 
+	bool isPointerArithmetic = left->type->IsPointer() && IsArithmetic(binaryType);
+
 	// Unless assiging, treat variables as the underlying values
-	if (binaryType != BinaryType::Assign)
+	if (!isPointerArithmetic && binaryType != BinaryType::Assign)
 		lhs = generator.LoadValueIfVariable(lhs, left);
 	rhs = generator.LoadValueIfVariable(rhs, right);
 
@@ -183,8 +185,9 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 		if (left->type->IsPointer() && IsArithmetic(binaryType)) {
 			bool subtracting = binaryType == BinaryType::Subtract;
 			llvm::Value* offset = !subtracting ? rhs : generator.llvm_context->builder->CreateNeg(rhs);
+			llvm::Value* zeroIndex = generator.GetNumericConstant(TypeTag::Int32, 0);
 
-			return generator.EmitInBoundsGEP(left->type->contained, lhs, { offset });
+			return generator.EmitInBoundsGEP(left->type->contained, lhs, { offset }, !subtracting ? "ptr.add" : "ptr.sub");
 		}
 
 		ResolveBinaryExpressionTypeDiscrepancy({ lhs, left->type }, { rhs, right->type }, this);
@@ -216,7 +219,7 @@ llvm::Value* BinaryExpression::Generate(Generator& generator)
 	}
 
 	
-	llvm::Value* result = generator.EmitBinaryOperator(instruction, lhs, rhs);
+	llvm::Value* result = generator.EmitBinaryOperator(instruction, lhs, rhs, "bin.op");
 
 	if (isCompoundAssignment)
 		generator.EmitStore(result, pointerLhs);

@@ -25,7 +25,6 @@ static const std::pair<TypeTag, const char*> TagToStringMap[] =
 	{ TypeTag::Int64,   "i64",    },
 	{ TypeTag::Float32, "f32",    },
 	{ TypeTag::Float64, "f64",    },
-	{ TypeTag::String,  "string", },
 	{ TypeTag::Bool,    "bool",   },
 };
 

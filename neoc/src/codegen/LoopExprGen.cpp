@@ -148,8 +148,9 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 		if (iteratingArray)
 		{
 			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, 0, false));
-			llvm::Value* currentElementPtr = generator.EmitInBoundsGEP(arrayType, arrayPtr,
-				{ zeroIndex, generator.EmitLoad(indexType, indexValuePtr) });
+			llvm::Value* index = generator.EmitLoad(indexType, indexValuePtr);
+
+			llvm::Value* currentElementPtr = generator.EmitInBoundsGEP(arrayType, arrayPtr, { zeroIndex, index }, "cur.ptr");
 			generator.EmitStore(generator.EmitLoad(arrayType->contained, currentElementPtr), iteratorValuePtr);
 		}
 

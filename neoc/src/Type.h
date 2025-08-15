@@ -12,7 +12,6 @@ enum class TypeTag
 	Float32, Float64,
 	Bool,
 	// Other!!!
-	String,
 	Array,
 	Struct,
 	Alias,
@@ -73,7 +72,7 @@ public:
 	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
 	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
-	bool IsString() const { return tag == TypeTag::String; }
+	//bool IsString() const { return tag == TypeTag::String; }
 
 	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
 	uint32_t GetBitWidth() const

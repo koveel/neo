@@ -14,6 +14,17 @@
 #include "Enum.h"
 #include "GeneratorContext.h"
 
+// Represents a value created in llvm ir and the expression it came from
+struct Expressed
+{
+	llvm::Value* raw = nullptr;
+	Expression* expression = nullptr;
+
+	// *x in neo
+	bool IsPointer() const;
+	bool IsVariable() const;
+};
+
 static Generator* s_Generator = nullptr;
 
 template<typename... Args>
@@ -37,7 +48,7 @@ static void Assert(bool condition, const char* fmt, Args&&... args)
 
 llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
 {
-	PROFILE_FUNCTION();
+	PROFILE_FUNCTION();	
 
 	if (auto unary = ToExpr<UnaryExpression>(expr))
 	{
@@ -57,10 +68,12 @@ llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* 
 			return generated;
 	}
 
-	if (!llvm::isa<llvm::AllocaInst>(generated) && !llvm::isa<llvm::LoadInst>(generated) && !llvm::isa<llvm::GetElementPtrInst>(generated))
+	bool isAlloca = llvm::isa<llvm::AllocaInst>(generated);
+	bool isGep = llvm::isa<llvm::GetElementPtrInst>(generated);
+	if (!isAlloca && !isGep)
 		return generated;
 
-	if (!generated->getType()->isPointerTy() || expr->type->IsString())
+	if (!generated->getType()->isPointerTy())
 		return generated;
 		
 	return EmitLoad(expr->type, generated);
@@ -88,7 +101,7 @@ static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
 	}
 
 	bool isPointer = type->isPointerTy();
-	bool isString = (type->getNumContainedTypes() == 1 && type->getContainedType(0)->isIntegerTy(8)) && expr->type->IsString();
+	bool isString = expr->type->IsPointer() && expr->type->contained->tag == TypeTag::Int8;
 
 	if (!isPointer || isString)
 		return value;
@@ -119,9 +132,9 @@ llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* struc
 	return llvm_context->builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
 }
 
-llvm::Value* Generator::EmitInBoundsGEP(Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices)
+llvm::Value* Generator::EmitInBoundsGEP(Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices, const char* debug_name)
 {
-	return llvm_context->builder->CreateInBoundsGEP(type->raw, ptr, indices);
+	return llvm_context->builder->CreateInBoundsGEP(type->raw, ptr, indices, debug_name);
 }
 
 static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
@@ -364,8 +377,8 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
-		llvm::Value* result = load ? generator.EmitLoad(type, value) : value;
 		type = type->GetContainedType();
+		llvm::Value* result = load ? generator.EmitLoad(type, value) : value;
 		return result;
 	}
 	}
@@ -373,11 +386,11 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 	ASSERT(false);
 }
 
-llvm::Value* Generator::EmitSubscript(BinaryExpression* binary)
+llvm::Value* Generator::EmitSubscript(BinaryExpression* binary, const char* debug_name)
 {
 	PROFILE_FUNCTION();
-
-	llvm::Value* zeroIndex = llvm::ConstantInt::get(*llvm_context->context, llvm::APInt(32, 0, false));
+	 
+	llvm::Value* zeroIndex = GetNumericConstant(TypeTag::Int32, 0);
 
 	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(*this), binary->right);
 	bool isIndexInteger = indexVal->getType()->isIntegerTy();
@@ -389,8 +402,12 @@ llvm::Value* Generator::EmitSubscript(BinaryExpression* binary)
 
 	// Should be doing this at the start of this function
 	Assert(binary->left->type->IsArray(), "expected subscript target to be of array type");
+	ArrayType* arrayType = binary->left->type->IsArray();
+	Assert(arrayType, "dwadd");
 
-	return llvm_context->builder->CreateInBoundsGEP(binary->left->type->raw, arrayPtr, { zeroIndex, indexVal });
+	llvm::Value* ptr = EmitInBoundsGEP(arrayType, arrayPtr, { indexVal }, debug_name);
+	return ptr;
+	return EmitLoad(arrayType->contained, ptr);
 }
 
 llvm::Value* EnumDefinitionExpression::Generate(Generator& generator)
@@ -433,7 +450,7 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 
 				if (ArrayType* compoundArrayType = compound->type->IsArray()) // [...]
 				{
-					llvm::Value* initializer = generator.CreateArrayAlloca(compoundArrayType, compound->children);
+					llvm::Value* initializer = generator.CreateArrayAlloca(compoundArrayType, compound->children, name.c_str());
 					generator.currentScope->AddValue(name, { type = compound->type, initializer });
 					return initializer;
 				}
@@ -455,7 +472,7 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 	}
 
 	// Alloc
-	llvm::Value* alloc = generator.EmitAlloca(type);
+	llvm::Value* alloc = generator.EmitAlloca(type, nullptr, name.c_str());
 	generator.currentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
@@ -593,9 +610,9 @@ llvm::Value* Generator::EmitLoad(Type* result, llvm::Value* ptr)
 	return llvm_context->builder->CreateLoad(result->raw, ptr);
 }
 
-llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
+llvm::Value* Generator::EmitBinaryOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs, const char* debug_name)
 {
-	return llvm_context->builder->CreateBinOp((llvm::Instruction::BinaryOps)op, lhs, rhs);
+	return llvm_context->builder->CreateBinOp((llvm::Instruction::BinaryOps)op, lhs, rhs, debug_name);
 }
 
 llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, llvm::Value* rhs)
@@ -603,7 +620,7 @@ llvm::Value* Generator::EmitComparisonOperator(uint32_t op, llvm::Value* lhs, ll
 	return llvm_context->builder->CreateCmp((llvm::CmpInst::Predicate)op, lhs, rhs);
 }
 
-llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize, const std::string& debug_name)
+llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize, const char* debug_name)
 {
 	return llvm_context->builder->CreateAlloca(type->raw, arraySize, debug_name);
 }
@@ -727,7 +744,7 @@ llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 
 		// Allocate return value
 		if (!isVoid)
-			current_function.return_value_alloca = generator.EmitAlloca(type);
+			current_function.return_value_alloca = generator.EmitAlloca(type, nullptr, "return");
 
 		current_function.return_block = llvm::BasicBlock::Create(*context, "exit", current_function.function);
 	}
@@ -811,7 +828,8 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 	auto& builder = generator.llvm_context->builder;
 	auto& current_function = generator.llvm_context->current_function;
 
-	type = Type::FromLLVM(current_function.function->getReturnType());
+	auto ty = current_function.function->getReturnType();
+	type = Type::FromLLVM(ty);
 
 	generator.currentScope->contains_terminator = true;
 
@@ -948,11 +966,6 @@ void Generator::ResolvePrimitiveType(Type& type, int possibleSourceLine)
 	case TypeTag::Bool:
 	{
 		type.raw = llvm::Type::getInt1Ty(*context);
-		return;
-	}
-	case TypeTag::String:
-	{
-		type.raw = llvm::PointerType::get(llvm::Type::getInt8Ty(*context), 0u);
 		return;
 	}
 	case TypeTag::Void:
