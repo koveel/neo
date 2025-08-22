@@ -6,19 +6,33 @@ print :: (msg: *i8)
     printf("\n");
 }
 
+String :: struct
+{
+    text: *i8;
+}
+
 main :: () -> i32
 {
+    strings := [] {
+        String { "One" },
+        String { "Two" },
+        String { "Three" },
+    };
+
+    string := String {
+        "hello"
+    };
+    print(string.text);
+    str := @strings[1];
+    print((str++).text);
+    print((*str).text);
+
+    // print((*str).text);
+    // print(str.text);
+
     nums := [] {
-        0, 1, 2, 3, 4
+        0, 1, 2, 3, 4, 5
     };
-    msgs := [] {
-        "one", "two", "three"
-    };
-
-    msg := @(msgs[0]);
-    print(*(msg + 2));
-
-    num := @nums[0];
-    num += 2;
-    return *(num - 1);
+    pnum := @nums[2];
+    return *(++pnum);
 }

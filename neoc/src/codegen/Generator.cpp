@@ -72,44 +72,6 @@ static void Warn(int line, const std::string& message, Args&&... args)
 	ResetConsoleColor();
 }
 
-//llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
-//{
-//	PROFILE_FUNCTION();	
-//
-//	if (auto unary = ToExpr<UnaryExpression>(expr))
-//	{
-//		switch (unary->unaryType)
-//		{
-//		case UnaryType::AddressOf:
-//		case UnaryType::PrefixIncrement:
-//		case UnaryType::PrefixDecrement:
-//		case UnaryType::PostfixIncrement:
-//		case UnaryType::PostfixDecrement:
-//			return generated;
-//		}
-//	}
-//	if (auto cast = ToExpr<CastExpression>(expr))
-//	{
-//		if (cast->type->IsPointer()) // Casting to pointer
-//			return generated;
-//	}
-//
-//	bool isAlloca = llvm::isa<llvm::AllocaInst>(generated);
-//	bool isGep = llvm::isa<llvm::GetElementPtrInst>(generated);
-//	if (!isAlloca && !isGep)
-//		return generated;
-//
-//	if (!generated->type->isPointerTy())
-//		return generated;
-//		
-//	return EmitLoad(expr->type, generated);
-//}
-//
-//llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
-//{
-//	return LoadValueIfVariable(generated, expr.get());
-//}
-
 llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex)
 {
 	return llvm_context->builder->CreateStructGEP(structType->raw, structPtr, memberIndex);
@@ -282,22 +244,22 @@ Value UnaryExpression::Generate(Generator& generator)
 			break;
 		}
 
-		LValue& lv = value.lvalue;
-		RValue ptrrv = generator.MaterializeToRValue(value);
 		Assert(!value.is_rvalue, "expected lvalue for increment/decrement");
+		LValue lv = value.lvalue;
+		Type* ptrTy = lv.type;              // T*
+		Type* elemTy = ptrTy->contained;
+
+		llvm::Value* oldPtr = generator.EmitLoad(ptrTy, lv.address.ptr); // load T*
+		llvm::Value* newPtr = generator.EmitInBoundsGEP(elemTy, oldPtr, { offset });
+
+		generator.EmitStore(newPtr, lv.address.ptr); // store T* back to T**
+
 		if (postfix) {
-			RValue initialrv = ptrrv;
-
-			llvm::Value* result = generator.EmitInBoundsGEP(value.type->contained, ptrrv.value, { offset });
-			generator.EmitStore(result, lv.address.ptr);
-
-			return LValue{ initialrv.value, initialrv.type };
+			return RValue{ oldPtr, ptrTy }; // result is rvalue T*
 		}
-
-		llvm::Value* result = generator.EmitInBoundsGEP(value.type->contained, ptrrv.value, { offset });
-		generator.EmitStore(result, lv.address.ptr);
-
-		return lv;
+		else {
+			return RValue{ newPtr, ptrTy }; // result is rvalue T*
+		}
 	}
 
 	switch (unaryType)
@@ -362,7 +324,7 @@ Value UnaryExpression::Generate(Generator& generator)
 	{
 		LValue& lv = value.lvalue;
 		type = lv.type;
-		return RValue{ lv.address.ptr, type }; // Industry trade secret - we don't actually take the address of it
+		return RValue{ lv.address.ptr, lv.type }; // Industry trade secret - we don't actually take the address of it
 	}
 	case UnaryType::Deref:
 	{
@@ -373,14 +335,16 @@ Value UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
+		Type* ptrTy = value.type;
+		Type* elemTy = value.type->contained;
 		if (value.is_rvalue) {
-			RValue& rv = value.rvalue;
-			return LValue{ rv.value, rv.type };
+			llvm::Value* basePtr = value.rvalue.value;
+			return LValue{ basePtr, elemTy };
 		}
-
-		LValue& lv = value.lvalue;
-		llvm::Value* loaded = generator.EmitLoad(lv.type, lv.address.ptr);
-		return LValue{ loaded, lv.type };
+		else {
+			llvm::Value* basePtr = generator.EmitLoad(ptrTy, value.lvalue.address.ptr);
+			return LValue{ basePtr, elemTy };
+		}
 	}
 	}
 
@@ -432,11 +396,6 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 	{
 		switch (initializer->nodeType)
 		{
-			//case NodeType::ArrayDefinition:
-			//{
-			//	auto array = ToExpr<ArrayDefinitionExpression>(initializer);
-			//	return array->Generate(generator);
-			//}
 			case NodeType::Primary:
 			{
 				auto primary = ToExpr<PrimaryExpression>(initializer);
@@ -460,7 +419,6 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 					//return { initializer, compoundArrayType, compound };
 				}
 
-				ASSERT(false);
 				break;
 			}
 		}
@@ -469,13 +427,7 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 		{
 			initialVal = initializer->Generate(generator);
 			initrv = generator.MaterializeToRValue(initialVal);
-			type = initrv.type;
-			//initrv = generator.MaterializeToRValue(initialVal);
-
-			//if (type)
-			//	initialVal = generator.CastRValueIfNecessary(initrv, type, false, this);
-			//else
-			//	type = initrv.type;
+			type = initializer->type;
 		}
 	}
 
@@ -484,27 +436,28 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 	generator.currentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
-	//if (StructType* structType = type->IsStruct())
-	//{
-	//	if (aggregateInitialization) {
-	//		generator.InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
-	//		return {};
-	//		//return { alloc, structType, this };
-	//	}
-	//	
-	//	if (!initializer) {
-	//		generator.InitializeStructMembersToDefault(alloc, structType);
-	//		return {};
-	//		// return { alloc, structType, this };
-	//	}
-	//
-	//	//initialVal = generator.LoadValueIfVariable(initializer->Generate(generator), initializer);
-	//	initialVal = initializer->Generate(generator);
-	//	generator.EmitStore(initialVal.raw, alloc);
-	//
-	//	return {};
-	//	//return { alloc, structType, this };
-	//}
+	if (StructType* structType = type->IsStruct())
+	{
+		if (aggregateInitialization) {
+			generator.InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
+			return {};
+			//return { alloc, structType, this };
+		}
+
+		if (!initializer) {
+			generator.InitializeStructMembersToDefault(alloc, structType);
+			return {};
+			// return { alloc, structType, this };
+		}
+
+		//initialVal = generator.LoadValueIfVariable(initializer->Generate(generator), initializer);
+		initialVal = initializer->Generate(generator);
+		initrv = generator.MaterializeToRValue(initialVal);
+		generator.EmitStore(initrv.value, alloc);
+
+		return {};
+		//return { alloc, structType, this };
+	}
 
 	if (!initialVal.type)
 	{
@@ -552,44 +505,50 @@ LValue Generator::EmitMemberAccessExpression(BinaryExpression* binary)
 	}
 	// STRUCTURE
 
-	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
-	// If left is MemberAccess: objectValue = gepinst (ptr)
 	Value structurev = binary->left->Generate(*this);
-	Assert(!structurev.is_rvalue, "expected lvalue for lhs of member access expression");
-	LValue structlv = structurev.lvalue;
+	llvm::Value* basePtr = nullptr; // will be ptr to struct
+	StructType* structType = nullptr;
+	Type* T = structurev.type;
 
-	// ptr.x instead of ptr->x
-	if (!structlv.type->IsStruct())
-	{
-		Assert(structlv.type->IsPointer(), "can't access member of non-struct type or pointer to struct type");
-		structlv = LValue{ EmitLoad(structlv.type->contained, structlv.address.ptr), structlv.type->contained };
+	if (T->IsStruct()) {
+		structType = T->IsStruct();
+		if (structurev.is_rvalue) {
+			LValue tmp = { EmitAlloca(T), T }; // S*
+			EmitStore(structurev.rvalue.value, tmp.address.ptr);
+			basePtr = tmp.address.ptr;
+		}
+		else
+			basePtr = structurev.lvalue.address.ptr;
+	}
+	else if (T->IsPointer() && T->contained->IsStruct()) {
+		structType = T->contained->IsStruct();
+		if (structurev.is_rvalue)
+			basePtr = structurev.rvalue.value;
+		else
+			basePtr = EmitLoad(T, structurev.lvalue.address.ptr);
+	}
+	else {
+		Assert(false, "member access on non-struct or non-pointer-to-struct type");
 	}
 
-	StructType* structureType = structlv.type->IsStruct();
-
-	// rhs should always be variable access expr
+	// 2) Resolve member index and type
 	VariableAccessExpression* memberExpr = ToExpr<VariableAccessExpression>(binary->right);
 	Assert(memberExpr, "expected variable access expression for rhs of member access");
 
-	const std::string& targetMemberName = memberExpr->name;
-
-	// Find member index
-	const auto& members = structureType->definition->members;
-	int memberIndex = -1;
-	for (uint32_t i = 0; i < members.size(); i++)
-	{
-		auto& member = members[i];
-		if (member->name == targetMemberName)
-		{
-			binary->type = member->type;
-			memberIndex = i;
-			break;
-		}
+	const auto& members = structType->definition->members;
+	int idx = -1;
+	for (uint32_t i = 0; i < members.size(); ++i) {
+		if (members[i]->name == memberExpr->name) { idx = (int)i; break; }
 	}
-	Assert(memberIndex >= 0, "'{}' not a member of struct '{}'", memberExpr->name, structureType->GetName());
+	Assert(idx >= 0, "not a member of struct");
 
-	llvm::Value* memberPtr = EmitStructGEP(structureType, structlv.address.ptr, (uint32_t)memberIndex);
-	return LValue{ memberPtr, members[memberIndex]->type->GetPointerTo() };
+	Type* fieldTy = members[idx]->type;
+
+	// 3) GEP to the field and return an LValue to the field
+	llvm::Value* fieldPtr = EmitStructGEP(structType, basePtr, (uint32_t)idx); // element type is S
+	binary->type = fieldTy;  // if you thread types through nodes
+
+	return LValue{ fieldPtr, fieldTy };  // NOTE: LValue.type is the field's frontend type, not pointer
 }
 
 Value VariableAccessExpression::Generate(Generator& generator)

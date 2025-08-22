@@ -192,9 +192,6 @@ Value BinaryExpression::Generate(Generator& generator)
 			bool subtracting = binaryType == BinaryType::Subtract;
 			llvm::Value* offset = !subtracting ? rhsrv.value : generator.llvm_context->builder->CreateNeg(rhsrv.value);
 
-			//RValue& lv = lhsv.lvalue;
-			//ASSERT(lhsv.is_rvalue);
-
 			llvm::Value* result = generator.EmitInBoundsGEP(lhsrv.type->contained, lhsrv.value, { offset });
 			if (isCompoundAssignment) {
 				ASSERT(!lhsv.is_rvalue);
