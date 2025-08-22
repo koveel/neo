@@ -69,7 +69,8 @@ public:
 	AliasType* IsAliasFor(Type* other);
 
 	bool IsPointer() const { return tag == TypeTag::Pointer; }
-	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
+	bool IsInteger() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
+	bool IsNumeric() const { return (tag >= TypeTag::UInt8 && tag <= TypeTag::Int64) || tag == TypeTag::Bool; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
 	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
 	//bool IsString() const { return tag == TypeTag::String; }

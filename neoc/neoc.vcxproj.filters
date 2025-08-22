@@ -37,6 +37,8 @@
     </ClInclude>
     <ClInclude Include="src\pch.h" />
     <ClInclude Include="src\codegen\GeneratorContext.h" />
+    <ClInclude Include="src\codegen\Expressed.h" />
+    <ClInclude Include="src\codegen\Value.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">
@@ -74,5 +76,6 @@
     </ClCompile>
     <ClCompile Include="src\pch.cpp" />
     <ClCompile Include="src\codegen\Visiting.cpp" />
+    <ClCompile Include="src\codegen\Expressed.cpp" />
   </ItemGroup>
 </Project>

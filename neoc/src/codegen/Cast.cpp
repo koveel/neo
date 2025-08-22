@@ -1,7 +1,7 @@
 #include "pch.h"
 
-#include "Tree.h"
 #include "Cast.h"
+#include "Tree.h"
 
 std::unordered_map<std::pair<TypeTag, TypeTag>, Cast> Cast::s_PrimitiveCasts;
 std::unordered_map<std::pair<Type*, Type*>, Cast> Cast::s_TypeCasts;

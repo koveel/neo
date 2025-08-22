@@ -1,5 +1,7 @@
 #pragma once
 
+#include "Type.h"
+
 namespace std
 {
 	template<> struct hash<pair<Type*, Type*>>

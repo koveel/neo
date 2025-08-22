@@ -1,6 +1,6 @@
 #pragma once
 
-struct Value
+struct ScopedValue
 {
 	Type* type;
 	llvm::Value* raw;
@@ -13,8 +13,8 @@ public:
 	Scope(Scope* parent)
 		: parentScope(parent) {}
 
-	void AddValue(const std::string& name, const Value& value);
-	bool HasValue(const std::string& name, Value* out, bool checkParentScopes = true) const;
+	void AddValue(const std::string& name, const ScopedValue& value);
+	bool HasValue(const std::string& name, ScopedValue* out, bool checkParentScopes = true) const;
 
 	// High iq stuff going on
 	Scope* Deepen() 
@@ -30,5 +30,5 @@ public:
 	bool contains_terminator = false; // return / break / continue
 private:
 	uint32_t depth = 0;
-	std::unordered_map<std::string, Value> values;
+	std::unordered_map<std::string, ScopedValue> values;
 };

@@ -16,12 +16,13 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 
 	for (auto& expr : elements)
 	{
-		llvm::Value* element = expr->Generate(*this);
+		Value elementv = expr->Generate(*this);
+		RValue rv = MaterializeToRValue(elementv);
 		//if (elementType && (elementType != element->getType()))
 		//	//throw CompileError(sourceLine, "expected {} as array element but got {} (index = {})", )
 		//	throw CompileError(sourceLine, "array element type mismatch (index = {})", i);
 
-		values.push_back(element);
+		values.push_back(rv.value);
 	}
 
 	llvm::Value* alloc = EmitAlloca(arrayType, nullptr, debug_name);
@@ -44,20 +45,20 @@ llvm::Value* Generator::CreateArrayAlloca(ArrayType* arrayType, const std::vecto
 	return alloc;
 }
 
-llvm::Value* ArrayDefinitionExpression::Generate(Generator& generator)
-{
-	llvm::Value* value = nullptr;
-	if (initializer)
-	{
-		value = initializer->Generate(generator);
-		type = initializer->type;
-	}
-	else
-	{
-		type = ArrayType::Get(type, capacity);
-		value = generator.EmitAlloca(type);
-	}
-
-	generator.ScopeValue(variableDef->name, { type, value });
-	return value;
-}
+//Value ArrayDefinitionExpression::Generate(Generator& generator)
+//{
+//	Value value = {};
+//	if (initializer)
+//	{
+//		value = initializer->Generate(generator);
+//		type = initializer->type;
+//	}
+//	else
+//	{
+//		type = ArrayType::Get(type, capacity);
+//		value = { generator.EmitAlloca(type), this };
+//	}
+//
+//	generator.ScopeValue(variableDef->name, { type, value.raw });
+//	return value;
+//}

@@ -72,10 +72,12 @@ void Generator::VisitEnumDefinition(EnumDefinitionExpression* expr)
 				throw CompileError(binary->sourceLine, "expected identifier for enum member {}", memberIndex);
 
 			const std::string& memberName = variable->name;
-			llvm::Value* value = binary->right->Generate(*this);
-			value = CastValueIfNecessary(value, binary->right->type, enumeration.integralType, false, binary->right.get());
+			Value value = binary->right->Generate(*this);
+			ASSERT(value.is_rvalue);
+			//RValue rv = MaterializeToRValue(value);
+			value = CastRValueIfNecessary(value.rvalue, enumeration.integralType, false, binary->right.get());
 
-			enumeration.members[memberName] = value;
+			enumeration.members[memberName] = value.rvalue.value;
 		}
 		else {
 			throw CompileError(expr->sourceLine, "invalid member {} for enum '{}'", memberIndex, expr->name);

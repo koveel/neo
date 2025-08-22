@@ -1,53 +1,42 @@
 printf :: (msg: *i8);
 
-Food :: enum
-{
-    Apple,
-    Banana,
-    Bread,
-    Cake,
-}
-
-food_to_string :: (food: Food) -> i64
-{
-    // switch food
-    // {
-    //     Food.Apple:
-    //     Food.Banana:
-    //         return "fruit";
-    //     Food.Banana:
-    //     Food.Cake:
-    //         return "carbs";
-    // }
-}
-
-print :: (msg: *i8)
-{
-    printf(msg);
-    printf("\n");
-}
+//print :: (msg: *i8)
+//{
+//    printf(msg);
+//    printf("\n");
+//}
 
 main :: () -> i32
 {
-    msgs := [] {
-        "One",
-        "Two",
-        "Seventeenthousand",
-    };
-
-    // 
-    i := msgs[0];
-    msgs[0] = 10;
-
-    pi := @i;
-
-    second := @msgs[0];
-    print(*(second + 1));
-    
     nums := [] {
-        0, 1, 2, 3, 4,
+        0, 1, 2, 3, 4
+    };
+    msgs := [] {
+        "one", "two", "three"
     };
 
-    first := @nums[0];
-    return *(first + 1);
+   // /*
+   // Unary
+   //   AddrOf,
+   //   Binary
+   //     Subscript
+   // */
+
+    msg := @(msgs[0]);
+    ++msg;
+    printf(*msg);
+
+    num := @(nums[0]);
+    ++num;
+    return *(++num);
+
+    //msgs := [] {
+    //    "One",
+    //    "Two",
+    //    "Three",
+    //};
+    //msg := msgs[0];
+    //print(msg);
+
+    //return 0;
 }

@@ -30,7 +30,7 @@ void BinaryExpression::ResolveType()
 	right->ResolveType();
 	type = left->type;
 
-	if (binaryType == BinaryType::Subscript)
+	if (binaryType == BinaryType::Subscript && left->type)
 		type = left->type->GetContainedType();
 }
 
@@ -67,9 +67,9 @@ void CastExpression::ResolveType()
 
 }
 
-void ArrayDefinitionExpression::ResolveType()
-{
-}
+//void ArrayDefinitionExpression::ResolveType()
+//{
+//}
 
 void VariableAccessExpression::ResolveType()
 {

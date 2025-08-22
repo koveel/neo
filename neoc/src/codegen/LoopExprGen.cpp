@@ -3,6 +3,8 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Verifier.h>
 
+#include "Value.h"
+
 #include "Tree.h"
 #include "CodegenUtils.h"
 
@@ -10,7 +12,7 @@
 #include "Generator.h"
 #include "GeneratorContext.h"
 
-llvm::Value* LoopControlFlowExpression::Generate(Generator& generator)
+Value LoopControlFlowExpression::Generate(Generator& generator)
 {
 	// branchless programming = 100x programmer
 	static llvm::Value*(*create[2])(Generator&) = {
@@ -26,7 +28,8 @@ llvm::Value* LoopControlFlowExpression::Generate(Generator& generator)
 
 	generator.currentScope->contains_terminator = true;
 
-	return create[(uint32_t)controlType](generator);
+	create[(uint32_t)controlType](generator);
+	return {};
 }
 
 static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
@@ -42,18 +45,18 @@ static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBin
 	return true;
 }
 
-llvm::Value* LoopExpression::Generate(Generator& generator)
+Value LoopExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
 
 	Type* indexType = Type::Get(TypeTag::Int32);
 
 	ArrayType* arrayType = nullptr;
-	llvm::Value* arrayPtr = nullptr;
+	LValue arraylv = {};
 
 	Type* iteratorType = range->type;
 	llvm::Value* indexValuePtr = generator.EmitAlloca(indexType);
-	llvm::Value* maximumIndex = nullptr;
+	RValue maximumIndex = {};
 	llvm::Value* iteratorValuePtr = nullptr; // For arrays, the value in the array
 		
 	generator.currentScope = generator.currentScope->Deepen();
@@ -62,11 +65,13 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	BinaryExpression* rangeOperand = nullptr;
 	if (!IsRange(range, &rangeOperand))
 	{
-		arrayPtr = range->Generate(generator);
-		bool isAlloca = llvm::isa<llvm::AllocaInst>(arrayPtr); // Not sure if this will always be true
+		Value arrayv = range->Generate(generator);
+		ASSERT(!arrayv.is_rvalue);
+		arraylv = arrayv.lvalue;
+		bool isAlloca = llvm::isa<llvm::AllocaInst>(arraylv.address.ptr); // Not sure if this will always be true
 		ASSERT(isAlloca);
 
-		llvm::AllocaInst* alloc = llvm::cast<llvm::AllocaInst>(arrayPtr);
+		llvm::AllocaInst* alloc = llvm::cast<llvm::AllocaInst>(arraylv.address.ptr);
 		llvm::Type* llvmArrayType = alloc->getAllocatedType();
 		ASSERT(llvmArrayType->isArrayTy());
 		arrayType = Type::FromLLVM(llvmArrayType)->IsArray();
@@ -74,7 +79,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 
 		//if (!arrayType->isArrayTy())
 		//	throw CompileError(range->sourceLine, "expected an object of array type to iterate");
-		maximumIndex = generator.GetNumericConstant(TypeTag::Int32, arrayType->count);
+		maximumIndex = RValue{ generator.GetNumericConstant(TypeTag::Int32, arrayType->count), indexType };
 
 		// Init iterator
 		iteratorType = arrayType->contained;
@@ -82,7 +87,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 
 		// gep
 		llvm::Value* zero = generator.GetNumericConstant(TypeTag::Int32, 0);
-		llvm::Value* initialValue = generator.EmitInBoundsGEP(arrayType, arrayPtr, { zero, zero });
+		llvm::Value* initialValue = generator.EmitInBoundsGEP(arrayType, arraylv.address.ptr, { zero, zero });
 
 		initialValue = generator.EmitLoad(arrayType->contained, initialValue);
 		generator.EmitStore(initialValue, iteratorValuePtr);
@@ -94,16 +99,16 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 	}
 	else
 	{
-		auto minimum = rangeOperand->left->Generate(generator);
-		auto maximum = rangeOperand->right->Generate(generator);
+		Value minimumv = rangeOperand->left->Generate(generator);
+		Value maximumv = rangeOperand->right->Generate(generator);
 
 		// If reading variable, treat it as underlying value so the compiler does compiler stuff.
-		minimum = generator.LoadValueIfVariable(minimum, rangeOperand->left);
-		maximum = generator.LoadValueIfVariable(maximum, rangeOperand->right);
-		maximumIndex = maximum;
+		RValue minimumrv = generator.MaterializeToRValue(minimumv);
+		RValue maximumrv = generator.MaterializeToRValue(maximumv);
+		maximumIndex = maximumrv;
 
 		iteratorType = rangeOperand->left->type;
-		generator.EmitStore(minimum, indexValuePtr);
+		generator.EmitStore(minimumrv.value, indexValuePtr);
 
 		generator.currentScope->AddValue(iteratorVariableName, { iteratorType, indexValuePtr });
 	}
@@ -133,7 +138,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 		llvm::Value* iteratorVal = generator.EmitLoad(indexType, indexValuePtr);
 		llvm::Type* iteratorType = iteratorVal->getType();
 
-		llvm::Value* bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximumIndex);
+		llvm::Value* bShouldContinue = builder->CreateICmpSLT(iteratorVal, maximumIndex.value);
 		builder->CreateCondBr(bShouldContinue, bodyBlock, endBlock);
 	}
 
@@ -150,7 +155,7 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 			llvm::Value* zeroIndex = llvm::ConstantInt::get(llvm::Type::getInt32Ty(*context), llvm::APInt(32, 0, false));
 			llvm::Value* index = generator.EmitLoad(indexType, indexValuePtr);
 
-			llvm::Value* currentElementPtr = generator.EmitInBoundsGEP(arrayType, arrayPtr, { zeroIndex, index }, "cur.ptr");
+			llvm::Value* currentElementPtr = generator.EmitInBoundsGEP(arrayType, arraylv.address.ptr, { zeroIndex, index }, "cur.ptr");
 			generator.EmitStore(generator.EmitLoad(arrayType->contained, currentElementPtr), iteratorValuePtr);
 		}
 
@@ -178,5 +183,5 @@ llvm::Value* LoopExpression::Generate(Generator& generator)
 
 	generator.currentScope = generator.currentScope->Increase();
 
-	return endBlock;
+	return {};
 }

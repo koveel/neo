@@ -6,34 +6,18 @@
 #include <llvm/IR/IRBuilder.h>
 #include <llvm/IR/Verifier.h>
 
-#include "Generator.h"
+#include "Value.h"
 
+#include "Generator.h"
 #include "PlatformUtils.h"
 
 #include "CodegenUtils.h"
 #include "Enum.h"
 #include "GeneratorContext.h"
 
-// Represents a value created in llvm ir and the expression it came from
-struct Expressed
-{
-	llvm::Value* raw = nullptr;
-	Expression* expression = nullptr;
-
-	// *x in neo
-	bool IsPointer() const;
-	bool IsVariable() const;
-};
+#define SETLINE generator.current_expression_source_line = sourceLine
 
 static Generator* s_Generator = nullptr;
-
-template<typename... Args>
-static void Warn(int line, const std::string& message, Args&&... args)
-{
-	SetConsoleColor(14);
-	std::cout << "[line " << line << "]: warning " << FormatString(message, std::forward<Args>(args)...) << "\n";
-	ResetConsoleColor();
-}
 
 // TODO: fix error shit
 // make these errors like parser errors
@@ -43,89 +27,88 @@ static void Assert(bool condition, const char* fmt, Args&&... args)
 	if (condition)
 		return;
 
-	throw CompileError(0, fmt, std::forward<Args>(args)...);
+	throw CompileError(s_Generator->current_expression_source_line, fmt, std::forward<Args>(args)...);
 }
 
-llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
+RValue Generator::CastRValueIfNecessary(const RValue& rv, Type* to, bool isExplicit, Expression* source)
 {
-	PROFILE_FUNCTION();	
-
-	if (auto unary = ToExpr<UnaryExpression>(expr))
-	{
-		switch (unary->unaryType)
-		{
-		case UnaryType::AddressOf:
-		case UnaryType::PrefixIncrement:
-		case UnaryType::PrefixDecrement:
-		case UnaryType::PostfixIncrement:
-		case UnaryType::PostfixDecrement:
-			return generated;
-		}
-	}
-	if (auto cast = ToExpr<CastExpression>(expr))
-	{
-		if (cast->type->IsPointer()) // Casting to pointer
-			return generated;
-	}
-
-	bool isAlloca = llvm::isa<llvm::AllocaInst>(generated);
-	bool isGep = llvm::isa<llvm::GetElementPtrInst>(generated);
-	if (!isAlloca && !isGep)
-		return generated;
-
-	if (!generated->getType()->isPointerTy())
-		return generated;
-		
-	return EmitLoad(expr->type, generated);
-}
-
-llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
-{
-	return LoadValueIfVariable(generated, expr.get());
-}
-
-static llvm::Value* LoadIfPointer(llvm::Value* value, Expression* expr)
-{
-	PROFILE_FUNCTION();
-
-	llvm::Type* type = value->getType();
-	if (auto unary = ToExpr<UnaryExpression>(expr))
-	{
-		if (unary->unaryType == UnaryType::AddressOf) // Don't load it if we're trying to get it's address
-			return value;
-	}
-	if (auto cast = ToExpr<CastExpression>(expr))
-	{
-		if (cast->type->IsPointer()) // Casting to pointer
-			return value;
-	}
-
-	bool isPointer = type->isPointerTy();
-	bool isString = expr->type->IsPointer() && expr->type->contained->tag == TypeTag::Int8;
-
-	if (!isPointer || isString)
-		return value;
-
-	return s_Generator->EmitLoad(expr->type, value);
-}
-
-llvm::Value* Generator::CastValueIfNecessary(llvm::Value* v, Type* from, Type* to, bool isExplicit, Expression* source)
-{
+	Type* from = rv.type;
 	if (from == to)
-		return v;
+		return rv;
 
 	bool isAnAlias = from->IsAliasFor(to) || to->IsAliasFor(from);
 	if (isAnAlias)
-		return v;
+		return rv;
 
 	Cast* cast = Cast::IsValid(from, to);
 	Assert(cast, "cannot cast from '{}' to '{}'", from->GetName(), to->GetName());
 
-	if (isExplicit || cast->implicit)
-		return cast->Invoke(v);
+	if (isExplicit || cast->implicit) {
+		return RValue{ cast->Invoke(rv.value), to };
+	}
 
 	Assert(false, "cannot implicitly cast from '{}' to '{}'", from->GetName(), to->GetName());
+	return {};
 }
+
+RValue Generator::MaterializeToRValue(const Value& val)
+{
+	if (val.is_rvalue)
+		return val.rvalue;
+	//Assert(!val.is_rvalue, "");
+
+	llvm::Value* ptr = val.lvalue.address.ptr;
+	Type* resultType = val.type;
+	llvm::Value* loaded = EmitLoad(resultType, ptr);
+
+	return RValue{ loaded, resultType };
+}
+
+template<typename... Args>
+static void Warn(int line, const std::string& message, Args&&... args)
+{
+	SetConsoleColor(14);
+	std::cout << "[line " << line << "]: warning " << FormatString(message, std::forward<Args>(args)...) << "\n";
+	ResetConsoleColor();
+}
+
+//llvm::Value* Generator::LoadValueIfVariable(llvm::Value* generated, Expression* expr)
+//{
+//	PROFILE_FUNCTION();	
+//
+//	if (auto unary = ToExpr<UnaryExpression>(expr))
+//	{
+//		switch (unary->unaryType)
+//		{
+//		case UnaryType::AddressOf:
+//		case UnaryType::PrefixIncrement:
+//		case UnaryType::PrefixDecrement:
+//		case UnaryType::PostfixIncrement:
+//		case UnaryType::PostfixDecrement:
+//			return generated;
+//		}
+//	}
+//	if (auto cast = ToExpr<CastExpression>(expr))
+//	{
+//		if (cast->type->IsPointer()) // Casting to pointer
+//			return generated;
+//	}
+//
+//	bool isAlloca = llvm::isa<llvm::AllocaInst>(generated);
+//	bool isGep = llvm::isa<llvm::GetElementPtrInst>(generated);
+//	if (!isAlloca && !isGep)
+//		return generated;
+//
+//	if (!generated->type->isPointerTy())
+//		return generated;
+//		
+//	return EmitLoad(expr->type, generated);
+//}
+//
+//llvm::Value* Generator::Generator::LoadValueIfVariable(llvm::Value* generated, std::unique_ptr<Expression>& expr)
+//{
+//	return LoadValueIfVariable(generated, expr.get());
+//}
 
 llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* structPtr, uint32_t memberIndex)
 {
@@ -135,11 +118,6 @@ llvm::Value* Generator::EmitStructGEP(StructType* structType, llvm::Value* struc
 llvm::Value* Generator::EmitInBoundsGEP(Type* type, llvm::Value* ptr, std::initializer_list<llvm::Value*> indices, const char* debug_name)
 {
 	return llvm_context->builder->CreateInBoundsGEP(type->raw, ptr, indices, debug_name);
-}
-
-static llvm::Value* LoadIfPointer(llvm::Value* value, std::unique_ptr<Expression>& expr)
-{
-	return LoadIfPointer(value, expr.get());
 }
 
 static uint32_t GetBitWidthOfIntegralType(TypeTag tag)
@@ -191,14 +169,16 @@ llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 	return nullptr;
 }
 
-llvm::Value* NullExpression::Generate(Generator& generator)
+Value NullExpression::Generate(Generator& generator)
 {
-	return llvm::ConstantPointerNull::get(llvm::PointerType::get(*generator.llvm_context->context, 0u));
+	SETLINE;
+	return RValue{ llvm::ConstantPointerNull::get(llvm::PointerType::get(*generator.llvm_context->context, 0u)), Type::Get(TypeTag::Pointer) };
 }
 
-llvm::Value* PrimaryExpression::Generate(Generator& generator)
+Value PrimaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	constexpr auto s = std::numeric_limits<uint32_t>::max();
 	auto& context = generator.llvm_context->context;
@@ -209,26 +189,27 @@ llvm::Value* PrimaryExpression::Generate(Generator& generator)
 	case TypeTag::UInt16:
 	case TypeTag::UInt32:
 	case TypeTag::UInt64:
-		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.u64, false));
+		return RValue{ llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.u64, true)), type };
 	case TypeTag::Int8:
 	case TypeTag::Int16:
 	case TypeTag::Int32:
 	case TypeTag::Int64:
-		return llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.i64, true));
+		return RValue{ llvm::ConstantInt::get(*context, llvm::APInt(GetBitWidthOfIntegralType(type->tag), value.i64, true)), type };
 	case TypeTag::Float32:
-		return llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64));
 	case TypeTag::Float64:
-		return llvm::ConstantFP::get(*context, llvm::APFloat(value.f64));
+		return RValue{ llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64)), type };
 	case TypeTag::Bool:
-		return llvm::ConstantInt::getBool(*context, value.b32);
+		return RValue{ llvm::ConstantInt::get(*context, llvm::APInt(8, value.b32)), type };
 	}
 
 	Assert(false, "invalid type for primary expression");
+	return {};
 }
 
-llvm::Value* StringExpression::Generate(Generator& generator)
+Value StringExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	std::string stringExpr;
 	stringExpr.reserve(value.length);
@@ -255,7 +236,8 @@ llvm::Value* StringExpression::Generate(Generator& generator)
 
 	auto& builder = generator.llvm_context->builder;
 
-	return builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module);
+	Type* stringTy = Type::Get(TypeTag::Pointer, Type::Get(TypeTag::Int8));
+	return RValue{ builder->CreateGlobalStringPtr(stringExpr, "gstr", 0U, generator.module.llvm_module), stringTy };
 }
 
 static bool IsUnaryArithmeticOperation(UnaryType type)
@@ -272,14 +254,15 @@ static bool IsUnaryArithmeticOperation(UnaryType type)
 	return false;
 }
 
-llvm::Value* UnaryExpression::Generate(Generator& generator)
+Value UnaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	auto& builder = generator.llvm_context->builder;
 
-	llvm::Value* value = operand->Generate(generator);
-	type = operand->type;
+	Value value = operand->Generate(generator);
+	type = value.type;
 
 	if (type->IsPointer() && IsUnaryArithmeticOperation(unaryType))
 	{
@@ -299,74 +282,88 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 			break;
 		}
 
-		llvm::Value* pointer = generator.LoadValueIfVariable(value, operand);
+		LValue& lv = value.lvalue;
+		RValue ptrrv = generator.MaterializeToRValue(value);
+		Assert(!value.is_rvalue, "expected lvalue for increment/decrement");
+		if (postfix) {
+			//LValue& lv = value.lvalue;
+			RValue initialrv = ptrrv;// generator.MaterializeToRValue(lv);
 
-		llvm::Value* initial = pointer;
-		llvm::Value* result = generator.EmitInBoundsGEP(operand->type->contained, pointer, { offset });
-		generator.EmitStore(result, value);
+			llvm::Value* result = generator.EmitInBoundsGEP(value.type->contained, ptrrv.value, { offset });
+			generator.EmitStore(result, lv.address.ptr);
 
-		return postfix ? initial : generator.EmitLoad(type, value);
+			return LValue{ initialrv.value, initialrv.type };
+		}
+
+		llvm::Value* result = generator.EmitInBoundsGEP(value.type->contained, ptrrv.value, { offset });
+		generator.EmitStore(result, lv.address.ptr);
+
+		return lv;
 	}
 
 	switch (unaryType)
 	{
 	case UnaryType::Not: // !value
 	{
-		value = generator.LoadValueIfVariable(value, operand);
-		return builder->CreateNot(value);
+		RValue rv = generator.MaterializeToRValue(value);
+		return RValue{ builder->CreateNot(rv.value), rv.type };
 	}
 	case UnaryType::Negate: // -value
 	{
-		value = generator.LoadValueIfVariable(value, operand);
+		RValue rv = generator.MaterializeToRValue(value);
 
-		llvm::Type* valueType = value->getType();
-		switch (valueType->getTypeID())
-		{
-		case llvm::Type::IntegerTyID:
-			return builder->CreateNeg(value);
-		case llvm::Type::FloatTyID:
-		case llvm::Type::DoubleTyID:
-			return builder->CreateFNeg(value);
-		}
+		Type* result = value.type;
+		if (result->IsInteger())
+			return RValue{ builder->CreateNeg(rv.value), rv.type };
+		if (result->IsFloatingPoint())
+			return RValue{ builder->CreateFNeg(rv.value), rv.type };
 
 		Assert(false, "invalid operand for unary negation (-), operand must be numeric");
+		break;
 	}
 	case UnaryType::PrefixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(type->tag, 1)), value);
+		LValue& lv = value.lvalue;
+		llvm::Value* loaded = generator.EmitLoad(lv.type->contained, lv.address.ptr);
+		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(type->tag, 1)), lv.address.ptr);
 
 		// Return newly incremented value
-		return generator.EmitLoad(type, value);
+		Type* resultTy = lv.type->contained;
+		return LValue{ generator.EmitLoad(lv.type->contained, lv.address.ptr), resultTy };
 	}
 	case UnaryType::PostfixIncrement:
 	{
 		// Increment
-		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateAdd(loaded, generator.GetNumericConstant(type->tag, 1)), value);
+		LValue& lv = value.lvalue;
+		RValue rv = generator.MaterializeToRValue(lv);
+		generator.EmitStore(builder->CreateAdd(rv.value, generator.GetNumericConstant(type->tag, 1)), lv.address.ptr);
 
 		// Return value before increment
-		return loaded;
+		return rv;
 	}
 	case UnaryType::PrefixDecrement:
 	{
-		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(type->tag, 1)), value);
+		RValue rv = generator.MaterializeToRValue(value);
+		LValue& lv = value.lvalue;
+		generator.EmitStore(builder->CreateSub(rv.value, generator.GetNumericConstant(type->tag, 1)), lv.address.ptr);
 
-		return generator.EmitLoad(type, value);
+		Type* resultTy = lv.type->contained;
+		return LValue{ generator.EmitLoad(lv.type->contained, lv.address.ptr), resultTy };
 	}
 	case UnaryType::PostfixDecrement:
 	{
-		llvm::Value* loaded = generator.EmitLoad(type, value);
-		generator.EmitStore(builder->CreateSub(loaded, generator.GetNumericConstant(type->tag, 1)), value);
+		LValue& lv = value.lvalue;
+		RValue rv = generator.MaterializeToRValue(value);
+		generator.EmitStore(builder->CreateSub(rv.value, generator.GetNumericConstant(type->tag, 1)), lv.address.ptr);
 
-		return loaded;
+		return rv;
 	}
 	case UnaryType::AddressOf:
 	{
-		type = type->GetPointerTo();
-		return value; // Industry trade secret - we don't actually take the address of it
+		LValue& lv = value.lvalue;
+		type = lv.type;
+		return RValue{ lv.address.ptr, type }; // Industry trade secret - we don't actually take the address of it
 	}
 	case UnaryType::Deref:
 	{
@@ -377,49 +374,54 @@ llvm::Value* UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
-		type = type->GetContainedType();
-		llvm::Value* result = load ? generator.EmitLoad(type, value) : value;
-		return result;
+		LValue& lv = value.lvalue;
+		//return LValue{ loaded, lv.type->contained };
+		type = type->contained;
+		llvm::Value* loaded = generator.EmitLoad(lv.type, lv.address.ptr);
+		return LValue{ loaded, lv.type };
 	}
 	}
 
-	ASSERT(false);
+	return {};
 }
 
-llvm::Value* Generator::EmitSubscript(BinaryExpression* binary, const char* debug_name)
+LValue Generator::EmitSubscript(BinaryExpression* binary)
 {
 	PROFILE_FUNCTION();
 	 
 	llvm::Value* zeroIndex = GetNumericConstant(TypeTag::Int32, 0);
+	Value indexv = binary->right->Generate(*this);
+	RValue indexrv = MaterializeToRValue(indexv);
 
-	llvm::Value* indexVal = LoadIfPointer(binary->right->Generate(*this), binary->right);
-	bool isIndexInteger = indexVal->getType()->isIntegerTy();
-
+	bool isIndexInteger = indexrv.type->IsInteger();
 	Assert(isIndexInteger, "expected integer value for array index");
 
-	llvm::Value* arrayPtr = binary->left->Generate(*this); // todo: check this shit
-	binary->type = binary->left->type->GetContainedType();
-
-	// Should be doing this at the start of this function
+	Value arrayv = binary->left->Generate(*this);
+	Assert(!arrayv.is_rvalue, "expected lvalue for lhs of subscript expression");
+	const LValue& arraylv = arrayv.lvalue;
 	Assert(binary->left->type->IsArray(), "expected subscript target to be of array type");
+
+	binary->type = binary->left->type->contained;
 	ArrayType* arrayType = binary->left->type->IsArray();
 	Assert(arrayType, "dwadd");
 
-	llvm::Value* ptr = EmitInBoundsGEP(arrayType, arrayPtr, { indexVal }, debug_name);
-	return ptr;
-	return EmitLoad(arrayType->contained, ptr);
+	llvm::Value* ptr = EmitInBoundsGEP(arrayType, arraylv.address.ptr, { zeroIndex, indexrv.value }, "arr.idx");
+	return LValue{ ptr, arrayType->contained->GetPointerTo() };
 }
 
-llvm::Value* EnumDefinitionExpression::Generate(Generator& generator)
+Value EnumDefinitionExpression::Generate(Generator& generator)
 {
-	return nullptr;
+	SETLINE;
+	return {};
 }
 
-llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
+Value VariableDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
-	llvm::Value* initialVal = nullptr;
+	Value initialVal;
+	RValue initrv;
 
 	bool aggregateInitialization = false;
 	CompoundExpression* aggregateInitializer = nullptr;
@@ -428,11 +430,11 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 	{
 		switch (initializer->nodeType)
 		{
-			case NodeType::ArrayDefinition:
-			{
-				auto array = ToExpr<ArrayDefinitionExpression>(initializer);
-				return array->Generate(generator);
-			}
+			//case NodeType::ArrayDefinition:
+			//{
+			//	auto array = ToExpr<ArrayDefinitionExpression>(initializer);
+			//	return array->Generate(generator);
+			//}
 			case NodeType::Primary:
 			{
 				auto primary = ToExpr<PrimaryExpression>(initializer);
@@ -452,9 +454,11 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 				{
 					llvm::Value* initializer = generator.CreateArrayAlloca(compoundArrayType, compound->children, name.c_str());
 					generator.currentScope->AddValue(name, { type = compound->type, initializer });
-					return initializer;
+					return {};
+					//return { initializer, compoundArrayType, compound };
 				}
 
+				ASSERT(false);
 				break;
 			}
 		}
@@ -462,12 +466,14 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 		if (!aggregateInitialization)
 		{
 			initialVal = initializer->Generate(generator);
-			initialVal = generator.LoadValueIfVariable(initialVal, initializer.get());
+			initrv = generator.MaterializeToRValue(initialVal);
+			type = initrv.type;
+			//initrv = generator.MaterializeToRValue(initialVal);
 
-			if (type)
-				initialVal = generator.CastValueIfNecessary(initialVal, initializer->type, type, false, this);
-			else
-				type = initializer->type;
+			//if (type)
+			//	initialVal = generator.CastRValueIfNecessary(initrv, type, false, this);
+			//else
+			//	type = initrv.type;
 		}
 	}
 
@@ -476,91 +482,44 @@ llvm::Value* VariableDefinitionExpression::Generate(Generator& generator)
 	generator.currentScope->AddValue(name, { type, alloc });
 
 	// Initialize members if struct
-	if (StructType* structType = type->IsStruct())
-	{
-		if (aggregateInitialization) {
-			generator.InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
-			return alloc;
-		}
-		
-		if (!initializer) {
-			generator.InitializeStructMembersToDefault(alloc, structType);
-			return alloc;
-		}
-
-		//initialVal = generator.LoadValueIfVariable(initializer->Generate(generator), initializer);
-		initialVal = initializer->Generate(generator);
-		generator.EmitStore(initialVal, alloc);
-
-		return alloc;
-	}
-
-	if (!initialVal)
-	{
-		if (type->IsPointer())
-			initialVal = llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw));
-		if (type->IsNumeric())
-			initialVal = generator.GetNumericConstant(type->tag, 0);
-		if (type->IsArray())
-			return alloc;
-	}
-
-	initialVal = generator.CastValueIfNecessary(initialVal, initializer->type, type, false, initializer.get());
-	generator.EmitStore(initialVal, alloc);
-
-	return alloc;
-}
-
-llvm::Value* Generator::EmitStructureMemberAccess(BinaryExpression* binary)
-{
-	PROFILE_FUNCTION();
-	
-	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
-	// If left is MemberAccess: objectValue = gepinst (ptr)
-	llvm::Value* objectValue = binary->left->Generate(*this);
-	Type* objectType = binary->left->type;
-
-	if (!objectType->IsStruct() && !objectType->IsArray())
-	{
-		Assert(objectType->IsPointer(), "can't access member of non-struct type or pointer to struct type");
-
-		objectValue = EmitLoad(objectType, objectValue);
-		objectType = objectType->GetContainedType();
-	}
-
-	// rhs should always be variable access expr
-	VariableAccessExpression* memberExpr = ToExpr<VariableAccessExpression>(binary->right);
-	Assert(memberExpr, "expected variable access expression for rhs of member access");
-
-	const std::string& targetMemberName = memberExpr->name;
-	
-	// epic hardcoded array.size
-	//if (objectType->IsArray() && targetMemberName == "count")
+	//if (StructType* structType = type->IsStruct())
 	//{
-	//	uint64_t size = objectType->raw->getArrayNumElements();
-	//	binary->type = Type::Get(TypeTag::UInt32);
-	//	return llvm::ConstantInt::get(llvm::Type::getInt32Ty(*llvm_context->context), llvm::APInt(32, size, false));
+	//	if (aggregateInitialization) {
+	//		generator.InitializeStructMembersAggregate(alloc, structType, aggregateInitializer);
+	//		return {};
+	//		//return { alloc, structType, this };
+	//	}
+	//	
+	//	if (!initializer) {
+	//		generator.InitializeStructMembersToDefault(alloc, structType);
+	//		return {};
+	//		// return { alloc, structType, this };
+	//	}
+	//
+	//	//initialVal = generator.LoadValueIfVariable(initializer->Generate(generator), initializer);
+	//	initialVal = initializer->Generate(generator);
+	//	generator.EmitStore(initialVal.raw, alloc);
+	//
+	//	return {};
+	//	//return { alloc, structType, this };
 	//}
 
-	StructType* structType = objectType->IsStruct();
-
-	// Find member index
-	const auto& members = structType->definition->members;
-	int memberIndex = -1;
-	for (uint32_t i = 0; i < members.size(); i++)
+	if (!initialVal.type)
 	{
-		auto& member = members[i];
-		if (member->name == targetMemberName)
-		{
-			binary->type = member->type;
-			memberIndex = i;
-			break;
-		}
+		if (type->IsPointer())
+			initrv = RValue{ llvm::ConstantPointerNull::get(llvm::cast<llvm::PointerType>(type->raw)), type };
+		if (type->IsNumeric())
+			initrv = RValue{ generator.GetNumericConstant(type->tag, 0), type };
+		//if (ArrayType* arrTy = type->IsArray())
+		//	return { alloc, arrTy, this };
 	}
-	Assert(memberIndex >= 0, "'{}' not a member of struct '{}'", memberExpr->name, objectType->GetName());
+	else {
+		initrv = generator.MaterializeToRValue(initialVal);
+	}
 
-	llvm::Value* memberPtr = EmitStructGEP(structType, objectValue, (uint32_t)memberIndex);
-	return memberPtr;
+	generator.EmitStore(initrv.value, alloc);
+
+	return {};
 }
 
 static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
@@ -574,9 +533,11 @@ static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
 	return target.members[memberName];
 }
 
-llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
+LValue Generator::EmitMemberAccessExpression(BinaryExpression* binary)
 {
-	// Enum?
+	PROFILE_FUNCTION();
+
+	// ENUM ?
 	if (auto* leftVariable = ToExpr<VariableAccessExpression>(binary->left))
 	{
 		const std::string& lhsID = leftVariable->name;
@@ -584,20 +545,60 @@ llvm::Value* Generator::HandleMemberAccessExpression(BinaryExpression* binary)
 		{
 			Enumeration& enume = module.DefinedEnums[lhsID];
 			binary->type = enume.integralType;
-			return AccessEnumMember(enume, binary->right.get());
+			return LValue{ AccessEnumMember(enume, binary->right.get()), enume.integralType }; // not an lvalue idiot
 		}
 	}
+	// STRUCTURE
 
-	return Generator::EmitStructureMemberAccess(binary);
+	// If left is VariableAccessExpr: objectValue = AllocaInst (ptr)
+	// If left is MemberAccess: objectValue = gepinst (ptr)
+	Value structurev = binary->left->Generate(*this);
+	Assert(!structurev.is_rvalue, "expected lvalue for lhs of member access expression");
+	LValue structlv = structurev.lvalue;
+
+	// ptr.x instead of ptr->x
+	if (!structlv.type->IsStruct())
+	{
+		Assert(structlv.type->IsPointer(), "can't access member of non-struct type or pointer to struct type");
+		structlv = LValue{ EmitLoad(structlv.type->contained, structlv.address.ptr), structlv.type->contained };
+	}
+
+	StructType* structureType = structlv.type->IsStruct();
+
+	// rhs should always be variable access expr
+	VariableAccessExpression* memberExpr = ToExpr<VariableAccessExpression>(binary->right);
+	Assert(memberExpr, "expected variable access expression for rhs of member access");
+
+	const std::string& targetMemberName = memberExpr->name;
+
+	// Find member index
+	const auto& members = structureType->definition->members;
+	int memberIndex = -1;
+	for (uint32_t i = 0; i < members.size(); i++)
+	{
+		auto& member = members[i];
+		if (member->name == targetMemberName)
+		{
+			binary->type = member->type;
+			memberIndex = i;
+			break;
+		}
+	}
+	Assert(memberIndex >= 0, "'{}' not a member of struct '{}'", memberExpr->name, structureType->GetName());
+
+	llvm::Value* memberPtr = EmitStructGEP(structureType, structlv.address.ptr, (uint32_t)memberIndex);
+	return LValue{ memberPtr, members[memberIndex]->type->GetPointerTo() };
 }
 
-llvm::Value* VariableAccessExpression::Generate(Generator& generator)
+Value VariableAccessExpression::Generate(Generator& generator)
 {
-	Value variable;
+	SETLINE;
+
+	ScopedValue variable;
 	Assert(generator.currentScope->HasValue(name, &variable), "identifier '{}' not declared in scope", name);
 
 	type = variable.type;
-	return variable.raw;
+	return LValue{ variable.raw, variable.type };
 }
 
 llvm::Value* Generator::EmitStore(llvm::Value* value, llvm::Value* ptr)
@@ -625,13 +626,17 @@ llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize, const cha
 	return llvm_context->builder->CreateAlloca(type->raw, arraySize, debug_name);
 }
 
-llvm::Value* ConstantDefinitionExpression::Generate(Generator& generator)
+Value ConstantDefinitionExpression::Generate(Generator& generator)
 {
-	return nullptr;
+	SETLINE;
+
+	return {};
 }
 
-llvm::Value* CompoundExpression::Generate(Generator& generator)
+Value CompoundExpression::Generate(Generator& generator)
 {
+	SETLINE;
+
 	if (type) {
 		if (StructType* structType = type->IsStruct()) {
 			//if (!structType->raw) {
@@ -640,7 +645,7 @@ llvm::Value* CompoundExpression::Generate(Generator& generator)
 
 			llvm::Value* structPtr = generator.EmitAlloca(structType);
 			generator.InitializeStructMembersAggregate(structPtr, structType, this);
-			return structPtr;
+			return LValue{ structPtr, structType };
 		}
 	}
 
@@ -665,12 +670,13 @@ llvm::Value* CompoundExpression::Generate(Generator& generator)
 
 	generator.currentScope = generator.currentScope->Increase();
 
-	return block;
+	return {};
 }
 
-llvm::Value* BranchExpression::Generate(Generator& generator)
+Value BranchExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	// TODO: else if
 
@@ -708,16 +714,18 @@ llvm::Value* BranchExpression::Generate(Generator& generator)
 	if (branches.size() > 1)
 		falseBlock = generateBranch(branches[branches.size() - 1], "bfalse");
 
-	llvm::Value* condition = generator.LoadValueIfVariable(ifBranch.condition->Generate(generator), ifBranch.condition);
-	llvm::BranchInst* branchInst = builder->CreateCondBr(condition, trueBlock, endBlock);
+	Value condition = ifBranch.condition->Generate(generator);
+	RValue condrv = generator.MaterializeToRValue(condition);
+	llvm::BranchInst* branchInst = builder->CreateCondBr(condrv.value, trueBlock, endBlock);
 	builder->SetInsertPoint(endBlock);
 
-	return branchInst;
+	return {};
 }
 
-llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
+Value FunctionDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	auto& builder = generator.llvm_context->builder;
 	auto& context = generator.llvm_context->context;
@@ -802,28 +810,31 @@ llvm::Value* FunctionDefinitionExpression::Generate(Generator& generator)
 		}
 	}
 
-	return current_function.function;
+	return {};
 }
 
-llvm::Value* CastExpression::Generate(Generator& generator)
+Value CastExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
-	llvm::Value* value = LoadIfPointer(from->Generate(generator), from);
+	Value value = from->Generate(generator);
+	RValue rv = generator.MaterializeToRValue(value);
 
-	bool useTag = false;
+	bool useTag = false; // tf is this?
 	if (type->IsPointer() || from->type->IsPointer())
 		useTag = true;
 
 	Cast* cast = useTag ? Cast::IsValid(from->type->tag, type->tag) : Cast::IsValid(from->type, type);
 	Assert(cast, "cannot cast from '{}' to '{}'", from->type->GetName(), type->GetName());
 
-	return cast->Invoke(value, this);
+	return RValue{ cast->Invoke(rv.value, this), type };
 }
 
-llvm::Value* ReturnStatement::Generate(Generator& generator)
+Value ReturnStatement::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	auto& builder = generator.llvm_context->builder;
 	auto& current_function = generator.llvm_context->current_function;
@@ -836,11 +847,11 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 	if (type->tag == TypeTag::Void)
 	{
 		builder->CreateBr(current_function.return_block);
-		return nullptr;
+		return {};
 	}
 
 	Assert(value.get(), "expected return statement to express a value of type '{}'", type->GetName());
-	llvm::Value* returnValue = nullptr;
+	RValue returnValue = {};
 
 	// In-place aggregate initialization
 	if (CompoundExpression* compound = ToExpr<CompoundExpression>(value))
@@ -850,33 +861,34 @@ llvm::Value* ReturnStatement::Generate(Generator& generator)
 			llvm::Value* structPtr = generator.EmitAlloca(type);
 			generator.InitializeStructMembersAggregate(structPtr, structType, compound);
 
-			returnValue = generator.EmitLoad(type, structPtr);
+			returnValue = RValue{ generator.EmitLoad(type, structPtr), structType };
 		}
 		if (ArrayType* arrayType = type->IsArray())
 		{
 			llvm::Value* arrayPtr = generator.CreateArrayAlloca(arrayType, compound->children);
-			returnValue = generator.EmitLoad(arrayType, arrayPtr);
+			returnValue = RValue{ generator.EmitLoad(arrayType, arrayPtr), arrayType };
 		}
 
-		ASSERT(returnValue);
+		ASSERT(returnValue.value);
 	}
 	else
 	{
 		// Everything else
-		returnValue = value->Generate(generator);
-		llvm::Value* loaded = generator.LoadValueIfVariable(returnValue, value);
-		returnValue = generator.CastValueIfNecessary(loaded, value->type, type, false, this);
+		Value returnv = value->Generate(generator);
+		returnValue = generator.MaterializeToRValue(returnv);
+		//returnValue = generator.CastRValueIfNecessary(returnValue, type, false, this);
 	}
 
-	generator.EmitStore(returnValue, current_function.return_value_alloca);
+	generator.EmitStore(returnValue.value, current_function.return_value_alloca);
 	builder->CreateBr(current_function.return_block);
-
-	return returnValue;
+	
+	return {};
 }
 
-llvm::Value* FunctionCallExpression::Generate(Generator& generator)
+Value FunctionCallExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
+	SETLINE;
 
 	Module& module = generator.module;
 	Assert(module.DefinedFunctions.count(name), "undeclared function '{}'", name);
@@ -893,18 +905,19 @@ llvm::Value* FunctionCallExpression::Generate(Generator& generator)
 	for (auto& expr : arguments)
 	{
 		// Generate arg
-		llvm::Value* value = expr->Generate(generator);
-		Type* argumentType = expr->type;
-		value = generator.LoadValueIfVariable(value, expr);
+		Value value = expr->Generate(generator);
+		RValue rv = generator.MaterializeToRValue(value);
+		Type* argumentType = rv.type;
 
 		// Type check
-		Type* expectedTy = signature.Parameters[i++];
-		value = generator.CastValueIfNecessary(value, expr->type, expectedTy, false, expr.get());
+		Type* expectedTy = signature.Parameters[i];
+		//rv = generator.CastRValueIfNecessary(rv, expectedTy, false, expr.get());
 			
-		argValues.push_back(value);
+		argValues.push_back(rv.value);
+		i++;
 	}
 
-	return generator.llvm_context->builder->CreateCall(function, argValues);
+	return RValue{ generator.llvm_context->builder->CreateCall(function, argValues), type };
 }
 
 void Generator::ResolvePrimitiveType(Type& type, int possibleSourceLine)
@@ -1427,12 +1440,12 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 	return result;
 }
 
-void Scope::AddValue(const std::string& name, const Value& value)
+void Scope::AddValue(const std::string& name, const ScopedValue& value)
 {
 	values[name] = value;
 }
 
-bool Scope::HasValue(const std::string& name, Value* out, bool checkParents) const
+bool Scope::HasValue(const std::string& name, ScopedValue* out, bool checkParents) const
 {
 	auto it = values.find(name);
 	bool existsInThisScope = it != values.end();
@@ -1449,7 +1462,7 @@ bool Scope::HasValue(const std::string& name, Value* out, bool checkParents) con
 	return existsInParentScopes;
 }
 
-bool Generator::ScopeValue(const std::string& name, const Value& value)
+bool Generator::ScopeValue(const std::string& name, const ScopedValue& value)
 {
 	currentScope->AddValue(name, value);
 

@@ -2,9 +2,9 @@
 
 #include "Lexer.h"
 #include "Type.h"
+#include "codegen/Value.h"
 
 class Generator;
-class llvm::Value;
 
 enum class NodeType
 {
@@ -15,7 +15,7 @@ enum class NodeType
 	VariableDefinition, VariableAccess,
 	Branch, Loop, LoopControlFlow, Range, ArrayInitialize,
 	FunctionDefinition, FunctionCall, Return,
-	StructDefinition, ArrayDefinition,
+	StructDefinition,
 	ConstantDefinition, EnumDefinition,
 };
 
@@ -24,7 +24,7 @@ struct ASTNode
 	uint32_t sourceLine = 0;
 	NodeType nodeType = NodeType::Default;
 
-	virtual llvm::Value* Generate(Generator&) { return nullptr; }
+	virtual Value Generate(Generator&) { return {}; }
 	virtual void ResolveType() {}
 };
 
@@ -43,7 +43,7 @@ struct NullExpression : public Expression
 {
 	using Expression::Expression;
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 };
 
 struct PrimaryExpression : public Expression
@@ -64,7 +64,7 @@ struct PrimaryExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Primary; }
 };
 
@@ -82,7 +82,7 @@ struct StringExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::String; }
 };
 
@@ -108,7 +108,7 @@ struct UnaryExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Unary; }
 
 	void ResolveType() override;
@@ -153,7 +153,7 @@ struct BinaryExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Binary; }
 
 	void ResolveType() override;
@@ -170,7 +170,7 @@ struct CastExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Cast; }
 
 	void ResolveType() override;
@@ -192,7 +192,7 @@ struct BranchExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Branch; }
 };
 
@@ -213,7 +213,7 @@ struct LoopControlFlowExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&);
+	Value Generate(Generator&);
 	static NodeType GetNodeType() { return NodeType::LoopControlFlow; }
 };
 
@@ -229,7 +229,7 @@ struct LoopExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Loop; }
 
 	void ResolveType() override;
@@ -246,7 +246,7 @@ struct CompoundExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Compound; }
 
 	void ResolveType() override;
@@ -278,7 +278,7 @@ struct ConstantDefinitionExpression : public DefinitionStatement
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::ConstantDefinition; }
 
 	void ResolveType() override;
@@ -295,30 +295,30 @@ struct VariableDefinitionExpression : public DefinitionStatement
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::VariableDefinition; }
 
 	void ResolveType() override;
 };
 
 // Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
-struct ArrayDefinitionExpression : public DefinitionStatement
-{
-	VariableDefinitionExpression* variableDef = nullptr;
-
-	uint64_t capacity = 0; // todo: make expr
-
-	ArrayDefinitionExpression(uint32_t line)
-		: DefinitionStatement(line)
-	{
-		nodeType = GetNodeType();
-	}
-
-	llvm::Value* Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::ArrayDefinition; }
-
-	void ResolveType() override;
-};
+//struct ArrayDefinitionExpression : public DefinitionStatement
+//{
+//	VariableDefinitionExpression* variableDef = nullptr;
+//
+//	uint64_t capacity = 0; // todo: make expr
+//
+//	ArrayDefinitionExpression(uint32_t line)
+//		: DefinitionStatement(line)
+//	{
+//		nodeType = GetNodeType();
+//	}
+//
+//	Value Generate(Generator&) override;
+//	static NodeType GetNodeType() { return NodeType::ArrayDefinition; }
+//
+//	void ResolveType() override;
+//};
 
 struct VariableAccessExpression : public Expression
 {
@@ -330,7 +330,7 @@ struct VariableAccessExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::VariableAccess; }
 
 	void ResolveType() override;
@@ -354,7 +354,7 @@ struct FunctionDefinitionExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::FunctionDefinition; }
 
 	void ResolveType() override;
@@ -371,7 +371,7 @@ struct FunctionCallExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::FunctionCall; }
 
 	void ResolveType() override;
@@ -387,7 +387,7 @@ struct ReturnStatement : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::Return; }
 
 	void ResolveType() override;
@@ -404,7 +404,7 @@ struct EnumDefinitionExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::EnumDefinition; }
 };
 
@@ -419,6 +419,6 @@ struct StructDefinitionExpression : public Expression
 		nodeType = GetNodeType();
 	}
 
-	llvm::Value* Generate(Generator&) override;
+	Value Generate(Generator&) override;
 	static NodeType GetNodeType() { return NodeType::StructDefinition; }
 };
