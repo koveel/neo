@@ -286,8 +286,7 @@ Value UnaryExpression::Generate(Generator& generator)
 		RValue ptrrv = generator.MaterializeToRValue(value);
 		Assert(!value.is_rvalue, "expected lvalue for increment/decrement");
 		if (postfix) {
-			//LValue& lv = value.lvalue;
-			RValue initialrv = ptrrv;// generator.MaterializeToRValue(lv);
+			RValue initialrv = ptrrv;
 
 			llvm::Value* result = generator.EmitInBoundsGEP(value.type->contained, ptrrv.value, { offset });
 			generator.EmitStore(result, lv.address.ptr);
@@ -374,9 +373,12 @@ Value UnaryExpression::Generate(Generator& generator)
 				load = false;
 		}
 
+		if (value.is_rvalue) {
+			RValue& rv = value.rvalue;
+			return LValue{ rv.value, rv.type };
+		}
+
 		LValue& lv = value.lvalue;
-		//return LValue{ loaded, lv.type->contained };
-		type = type->contained;
 		llvm::Value* loaded = generator.EmitLoad(lv.type, lv.address.ptr);
 		return LValue{ loaded, lv.type };
 	}

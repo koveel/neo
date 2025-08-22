@@ -1,10 +1,10 @@
 printf :: (msg: *i8);
 
-//print :: (msg: *i8)
-//{
-//    printf(msg);
-//    printf("\n");
-//}
+print :: (msg: *i8)
+{
+    printf(msg);
+    printf("\n");
+}
 
 main :: () -> i32
 {
@@ -15,28 +15,10 @@ main :: () -> i32
         "one", "two", "three"
     };
 
-   // /*
-   // Unary
-   //   AddrOf,
-   //   Binary
-   //     Subscript
-   // */
-
     msg := @(msgs[0]);
-    ++msg;
-    printf(*msg);
+    print(*(msg + 2));
 
-    num := @(nums[0]);
-    ++num;
-    return *(++num);
-
-    //msgs := [] {
-    //    "One",
-    //    "Two",
-    //    "Three",
-    //};
-    //msg := msgs[0];
-    //print(msg);
-
-    //return 0;
+    num := @nums[0];
+    num += 2;
+    return *(num - 1);
 }

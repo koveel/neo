@@ -181,7 +181,7 @@ Value BinaryExpression::Generate(Generator& generator)
 
 	RValue lhsrv, rhsrv;
 	// Unless assiging, treat variables as the underlying values
-	if (!isPointerArithmetic && binaryType != BinaryType::Assign) {
+	if (binaryType != BinaryType::Assign) {
 		lhsrv = generator.MaterializeToRValue(lhsv);
 	}
 	rhsrv = generator.MaterializeToRValue(rhsv);
@@ -191,10 +191,17 @@ Value BinaryExpression::Generate(Generator& generator)
 		if (left->type->IsPointer() && IsArithmetic(binaryType)) {
 			bool subtracting = binaryType == BinaryType::Subtract;
 			llvm::Value* offset = !subtracting ? rhsrv.value : generator.llvm_context->builder->CreateNeg(rhsrv.value);
-			llvm::Value* zeroIndex = generator.GetNumericConstant(TypeTag::Int32, 0);
 
-			LValue lhslv = lhsv.lvalue;
-			return LValue{ generator.EmitInBoundsGEP(left->type->contained, lhslv.address.ptr, { offset }, !subtracting ? "ptr.add" : "ptr.sub"), left->type };
+			//RValue& lv = lhsv.lvalue;
+			//ASSERT(lhsv.is_rvalue);
+
+			llvm::Value* result = generator.EmitInBoundsGEP(lhsrv.type->contained, lhsrv.value, { offset });
+			if (isCompoundAssignment) {
+				ASSERT(!lhsv.is_rvalue);
+				generator.EmitStore(result, lhsv.lvalue.address.ptr);
+			}
+
+			return RValue{ result, lhsrv.type };
 		}
 
 		//ResolveBinaryExpressionTypeDiscrepancy({ lhs.raw, left->type }, { rhs.raw, right->type }, this);
