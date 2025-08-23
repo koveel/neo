@@ -140,9 +140,7 @@ static std::pair<RValue, RValue> ResolveBinaryExpressionTypeDiscrepancy(Value le
 		uint32_t fp = 1 - nonFP;
 
 		Cast* cast = Cast::IsValid(results[nonFP].second, results[fp].second);
-		if (!cast) {
-			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
-		}
+		Assert(cast, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
 
 		results[nonFP].first = cast->Invoke(results[nonFP].first);
 		results[nonFP].second = results[fp].second;
@@ -156,9 +154,8 @@ static std::pair<RValue, RValue> ResolveBinaryExpressionTypeDiscrepancy(Value le
 		uint32_t sign = 1 - nonSign;
 
 		Cast* cast = Cast::IsValid(results[nonSign].second, results[sign].second);
-		if (!cast) {
-			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
-		}
+		Assert(cast, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
+
 		results[nonSign].first = cast->Invoke(results[nonSign].first);
 		results[nonSign].second = results[sign].second;
 	}
@@ -172,7 +169,7 @@ static std::pair<RValue, RValue> ResolveBinaryExpressionTypeDiscrepancy(Value le
 Value BinaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	generator.current_expression_source_line = sourceLine;
+	generator.current_expression = this;
 
 	if (binaryType == BinaryType::MemberAccess)
 		return generator.EmitMemberAccessExpression(this);

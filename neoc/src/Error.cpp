@@ -7,31 +7,27 @@
 // string_view into the source code at the place the error was
 // offset from the start of the string_view, where the error originated from
 // for the error msg
-static std::pair<std::string_view, size_t> BuildSourceViewString(const Lexer& lexer)
+std::pair<std::string_view, size_t> BuildSourceViewString(const File& file, uint32_t offset)
 {
-	const char* filesource = lexer.file.source.c_str();
-	const char* errorLocation = lexer.previousToken.start + lexer.previousToken.length;
-	size_t rangeOffset = errorLocation - filesource;
-
 	// Get just the error line
 	// most braindead way to do this ever?
-	size_t lhs = rangeOffset;
+	size_t lhs = offset;
 	while (lhs > 0)
 	{
-		char current = filesource[--lhs];
+		char current = file.source[--lhs];
 		if (current == '\n')
 		{
 			do
 			{
-				current = filesource[++lhs];
+				current = file.source[++lhs];
 			} while (IsWhitespace(current));
 			break;
 		}
 	}
-	size_t rhs = rangeOffset;
-	while (rhs < lexer.file.length())
+	size_t rhs = offset;
+	while (rhs < file.length())
 	{
-		char current = filesource[rhs];
+		char current = file.source[rhs];
 		if (current == '\n' || current == '\0')
 			break;
 
@@ -40,15 +36,19 @@ static std::pair<std::string_view, size_t> BuildSourceViewString(const Lexer& le
 
 
 	size_t lineLength = rhs - lhs;
-	std::string_view line = { filesource + lhs, lineLength };
+	std::string_view line = { file.source.c_str() + lhs, lineLength};
 
-	return { line, rangeOffset - lhs };
+	return { line, offset - lhs };
 }
 
 void Internal_LogError(const std::string& error)
 {
 	Parser* parser = Parser::GetParser();
 	const Lexer* lexer = parser->lexer;
+
+	const char* filesource = lexer->file.source.c_str();
+	const char* errorLocation = lexer->previousToken.start + lexer->previousToken.length;
+	auto pair = BuildSourceViewString(lexer->file, errorLocation - filesource);
 
 	uint32_t line = lexer->line;
 	uint32_t column = lexer->column;
@@ -59,7 +59,6 @@ void Internal_LogError(const std::string& error)
 	ResetConsoleColor();
 
 	std::cout << "\t";
-	auto pair = BuildSourceViewString(*lexer);
 	std::cout << pair.first << "\n\t";
 	SetConsoleColor(12);
 

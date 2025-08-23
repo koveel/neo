@@ -15,19 +15,39 @@
 #include "Enum.h"
 #include "GeneratorContext.h"
 
-#define SETLINE generator.current_expression_source_line = sourceLine
-
 static Generator* s_Generator = nullptr;
 
-// TODO: fix error shit
-// make these errors like parser errors
-template<typename... Args>
-static void Assert(bool condition, const char* fmt, Args&&... args)
+void Internal_AssertionFailed(const std::string& error)
 {
-	if (condition)
-		return;
+	const Lexer* lexer = Parser::GetParser()->lexer; // just need the file src
+	const char* filesource = lexer->file.source.c_str();
+	Expression* expr = s_Generator->current_expression;
 
-	throw CompileError(s_Generator->current_expression_source_line, fmt, std::forward<Args>(args)...);
+	auto pair = BuildSourceViewString(lexer->file, expr->sourceStart);
+
+	std::cout << lexer->file.name << "\n";
+	SetConsoleColor(12);
+	std::cout << "[" << expr->sourceLine << "]: " << error << "\n";
+	ResetConsoleColor();
+
+	std::cout << "\t";
+	std::cout << pair.first << "\n\t";
+	SetConsoleColor(12);
+
+	auto indent = [&pair](size_t offset) {
+		for (size_t i = 0; i < std::max(pair.second, offset) - offset; i++)
+			std::cout << " ";
+	};
+	indent(0);
+	std::cout << "|\n\t";
+	indent(2);
+	std::cout << "there\n";
+	ResetConsoleColor();
+
+	std::cout << "\n";
+
+	//std::string errorMessage = FormatString("[{}]: {}", expr->sourceLine, error);
+	throw CompileError("");
 }
 
 RValue Generator::CastRValueIfNecessary(const RValue& rv, Type* to, bool isExplicit, Expression* source)
@@ -133,14 +153,14 @@ llvm::Value* Generator::GetNumericConstant(TypeTag tag, int64_t value)
 
 Value NullExpression::Generate(Generator& generator)
 {
-	SETLINE;
+	generator.current_expression = this;
 	return RValue{ llvm::ConstantPointerNull::get(llvm::PointerType::get(*generator.llvm_context->context, 0u)), Type::Get(TypeTag::Pointer) };
 }
 
 Value PrimaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	constexpr auto s = std::numeric_limits<uint32_t>::max();
 	auto& context = generator.llvm_context->context;
@@ -171,7 +191,7 @@ Value PrimaryExpression::Generate(Generator& generator)
 Value StringExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	std::string stringExpr;
 	stringExpr.reserve(value.length);
@@ -219,7 +239,7 @@ static bool IsUnaryArithmeticOperation(UnaryType type)
 Value UnaryExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	auto& builder = generator.llvm_context->builder;
 
@@ -370,14 +390,14 @@ LValue Generator::EmitSubscript(BinaryExpression* binary)
 
 Value EnumDefinitionExpression::Generate(Generator& generator)
 {
-	SETLINE;
+	generator.current_expression = this;
 	return {};
 }
 
 Value VariableDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	Value initialVal;
 	RValue initrv;
@@ -387,15 +407,15 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 
 	if (initializer)
 	{
-		switch (initializer->nodeType)
+		switch (initializer->exprType)
 		{
-			case NodeType::Primary:
+			case ExpressionType::Primary:
 			{
 				auto primary = ToExpr<PrimaryExpression>(initializer);
 				primary->type = type;
 				break;
 			}
-			case NodeType::Compound:
+			case ExpressionType::Compound:
 			{
 				// aggregate init
 				CompoundExpression* compound = ToExpr<CompoundExpression>(initializer);
@@ -472,7 +492,7 @@ Value VariableDefinitionExpression::Generate(Generator& generator)
 
 static llvm::Value* AccessEnumMember(Enumeration& target, Expression* rhs)
 {
-	ASSERT(rhs->nodeType == NodeType::VariableAccess);
+	ASSERT(rhs->exprType == ExpressionType::VariableAccess);
 	auto* access = ToExpr<VariableAccessExpression>(rhs);
 
 	const std::string& memberName = access->name;
@@ -546,7 +566,7 @@ LValue Generator::EmitMemberAccessExpression(BinaryExpression* binary)
 
 Value VariableAccessExpression::Generate(Generator& generator)
 {
-	SETLINE;
+	generator.current_expression = this;
 
 	ScopedValue variable;
 	Assert(generator.currentScope->HasValue(name, &variable), "identifier '{}' not declared in scope", name);
@@ -582,14 +602,14 @@ llvm::Value* Generator::EmitAlloca(Type* type, llvm::Value* arraySize, const cha
 
 Value ConstantDefinitionExpression::Generate(Generator& generator)
 {
-	SETLINE;
+	generator.current_expression = this;
 
 	return {};
 }
 
 Value CompoundExpression::Generate(Generator& generator)
 {
-	SETLINE;
+	generator.current_expression = this;
 
 	if (type) {
 		if (StructType* structType = type->IsStruct()) {
@@ -630,7 +650,7 @@ Value CompoundExpression::Generate(Generator& generator)
 Value BranchExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	// TODO: else if
 
@@ -679,7 +699,7 @@ Value BranchExpression::Generate(Generator& generator)
 Value FunctionDefinitionExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	auto& builder = generator.llvm_context->builder;
 	auto& context = generator.llvm_context->context;
@@ -770,7 +790,7 @@ Value FunctionDefinitionExpression::Generate(Generator& generator)
 Value CastExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	Value value = from->Generate(generator);
 	RValue rv = generator.MaterializeToRValue(value);
@@ -791,7 +811,7 @@ Value CastExpression::Generate(Generator& generator)
 Value ReturnStatement::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	auto& builder = generator.llvm_context->builder;
 	auto& current_function = generator.llvm_context->current_function;
@@ -845,7 +865,7 @@ Value ReturnStatement::Generate(Generator& generator)
 Value FunctionCallExpression::Generate(Generator& generator)
 {
 	PROFILE_FUNCTION();
-	SETLINE;
+	generator.current_expression = this;
 
 	Module& module = generator.module;
 	Assert(module.DefinedFunctions.count(name), "undeclared function '{}'", name);
@@ -1375,14 +1395,14 @@ CompileResult Generator::Generate(ParseResult& parseResult, const CommandLineArg
 	catch (const CompileError& err)
 	{
 		result.Succeeded = false;
-		SetConsoleColor(12);
-		if (err.line == -1) {
-			std::cout << "error: " << err.message << "\n";
-		}
-		else {
-			std::cout << "[line " << err.line << "] error: " << err.message << "\n";
-		}
-		ResetConsoleColor();
+		//SetConsoleColor(12);
+		//if (err.line == -1) {
+		//	std::cout << "error: " << err.message << "\n";
+		//}
+		//else {
+		//	std::cout << "[line " << err.line << "] error: " << err.message << "\n";
+		//}
+		//ResetConsoleColor();
 	}
 
 	return result;

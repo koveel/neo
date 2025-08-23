@@ -1,6 +1,6 @@
 #pragma once
 
-struct Type;
+class Type;
 struct Value;
 
 struct LValue

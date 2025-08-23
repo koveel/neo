@@ -34,7 +34,7 @@ Value LoopControlFlowExpression::Generate(Generator& generator)
 
 static bool IsRange(std::unique_ptr<Expression>& expr, BinaryExpression** outBinary)
 {
-	if (expr->nodeType != NodeType::Binary)
+	if (expr->exprType != ExpressionType::Binary)
 		return false;
 
 	BinaryExpression* binary = ToExpr<BinaryExpression>(expr);

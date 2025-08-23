@@ -71,11 +71,8 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 			ASSERT(member);
 
 			uint32_t memberIndex = GetIndexOfMemberInStruct(memberName, type);
-			if (memberIndex == std::numeric_limits<uint32_t>::max())
-				throw CompileError(expr->sourceLine, "member '{}' doesn't exist in struct '{}'", memberName.c_str(), type->GetName().c_str());
-
-			if (std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end())
-				throw CompileError(expr->sourceLine, "member '{}' appears multiple times in aggregate initializer. can only assign to it once", memberName.c_str());
+			Assert(memberIndex != std::numeric_limits<uint32_t>::max(), "member '{}' doesn't exist in struct '{}'", memberName.c_str(), type->GetName().c_str());
+			Assert(std::find(initializedMembers.begin(), initializedMembers.end(), memberIndex) != initializedMembers.end(), "member '{}' appears multiple times in aggregate initializer. can only assign to it once", memberName.c_str());
 			initializedMembers.push_back(memberIndex);
 
 			Value value = binary->right->Generate(*this);
@@ -89,8 +86,7 @@ void Generator::InitializeStructMembersAggregate(llvm::Value* structPtr, StructT
 		}
 		else
 		{
-			if (usedNamedInitialization)
-				throw CompileError(expr->sourceLine, "if using named initialization \"member = x\", must use it for all subsequent initializations");
+			Assert(!usedNamedInitialization, "if using named initialization \"member = x\", must use it for all subsequent initializations");
 
 			Value value = expr->Generate(*this);
 			RValue rv = MaterializeToRValue(value);
@@ -113,8 +109,7 @@ Value StructDefinitionExpression::Generate(Generator& generator)
 		if (memberType->tag != TypeTag::Unresolved)
 			continue;
 
-		throw CompileError(vardef->sourceLine, "unresolved type '{}' for member '{}' in struct '{}'",
-			memberType->GetName().c_str(), vardef->name.c_str(), name.c_str());
+		Assert(false, "unresolved type '{}' for member '{}' in struct '{}'", memberType->GetName().c_str(), vardef->name.c_str(), name.c_str());
 	}
 
 	return {};

@@ -23,8 +23,7 @@ public:
 	Module& module;
 	Scope* currentScope = nullptr;
 	struct LLVM* llvm_context = nullptr;
-
-	uint32_t current_expression_source_line = 0;
+	Expression* current_expression = nullptr;
 public:
 	Generator(Module& module);
 	~Generator();

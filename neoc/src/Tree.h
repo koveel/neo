@@ -6,7 +6,7 @@
 
 class Generator;
 
-enum class NodeType
+enum class ExpressionType
 {
 	Default = 1,
 	Compound,
@@ -19,31 +19,23 @@ enum class NodeType
 	ConstantDefinition, EnumDefinition,
 };
 
-struct ASTNode
+struct Expression
 {
-	uint32_t sourceLine = 0;
-	NodeType nodeType = NodeType::Default;
+	Type* type = nullptr;	 
+	ExpressionType exprType = ExpressionType::Default;
+
+	uint32_t sourceLine = 0, sourceStart = 0;
 
 	virtual Value Generate(Generator&) { return {}; }
 	virtual void ResolveType() {}
 };
 
-struct Expression : public ASTNode
-{
-	Type* type = nullptr;	 
-
-	Expression(uint32_t line)
-	{
-		sourceLine = line;
-	}
-};
-
 // simplifies things
 struct NullExpression : public Expression
 {
-	using Expression::Expression;
-
 	Value Generate(Generator&) override;
+
+	static ExpressionType GetExprType() { return ExpressionType::ConstantDefinition; }
 };
 
 struct PrimaryExpression : public Expression
@@ -58,14 +50,10 @@ struct PrimaryExpression : public Expression
 		double f64;
 	} value;
 
-	PrimaryExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
+	//using Expression::Expression;
 
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Primary; }
+	static ExpressionType GetExprType() { return ExpressionType::Primary; }
 };
 
 struct StringExpression : public Expression
@@ -76,14 +64,8 @@ struct StringExpression : public Expression
 		uint32_t length = 0;
 	} value;
 
-	StringExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::String; }
+	static ExpressionType GetExprType() { return ExpressionType::String; }
 };
 
 enum class UnaryType
@@ -102,14 +84,8 @@ struct UnaryExpression : public Expression
 	UnaryType unaryType = (UnaryType)0;
 	std::unique_ptr<Expression> operand = nullptr;
 
-	UnaryExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Unary; }
+	static ExpressionType GetExprType() { return ExpressionType::Unary; }
 
 	void ResolveType() override;
 };
@@ -146,14 +122,8 @@ struct BinaryExpression : public Expression
 	bool isCompoundAssignment = false;
 	std::unique_ptr<Expression> left = nullptr, right = nullptr;
 
-	BinaryExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Binary; }
+	static ExpressionType GetExprType() { return ExpressionType::Binary; }
 
 	void ResolveType() override;
 };
@@ -163,14 +133,8 @@ struct CastExpression : public Expression
 	Token token;
 	std::unique_ptr<Expression> from;
 
-	CastExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Cast; }
+	static ExpressionType GetExprType() { return ExpressionType::Cast; }
 
 	void ResolveType() override;
 };
@@ -185,14 +149,8 @@ struct BranchExpression : public Expression
 	};
 	std::vector<Branch> branches;
 
-	BranchExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Branch; }
+	static ExpressionType GetExprType() { return ExpressionType::Branch; }
 };
 
 enum class LoopControlFlowType
@@ -206,14 +164,8 @@ struct LoopControlFlowExpression : public Expression
 {
 	LoopControlFlowType controlType;
 
-	LoopControlFlowExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&);
-	static NodeType GetNodeType() { return NodeType::LoopControlFlow; }
+	static ExpressionType GetExprType() { return ExpressionType::LoopControlFlow; }
 };
 
 struct LoopExpression : public Expression
@@ -222,14 +174,8 @@ struct LoopExpression : public Expression
 	std::unique_ptr<Expression> range;
 	std::vector<std::unique_ptr<Expression>> body;
 
-	LoopExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Loop; }
+	static ExpressionType GetExprType() { return ExpressionType::Loop; }
 
 	void ResolveType() override;
 };
@@ -239,14 +185,8 @@ struct CompoundExpression : public Expression
 {
 	std::vector<std::unique_ptr<Expression>> children;
 
-	CompoundExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Compound; }
+	static ExpressionType GetExprType() { return ExpressionType::Compound; }
 
 	void ResolveType() override;
 };
@@ -271,14 +211,8 @@ struct ConstantDefinitionExpression : public DefinitionStatement
 	// only ids for now
 	std::string lhs, rhs;
 
-	ConstantDefinitionExpression(uint32_t line)
-		: DefinitionStatement(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::ConstantDefinition; }
+	static ExpressionType GetExprType() { return ExpressionType::ConstantDefinition; }
 
 	void ResolveType() override;
 };
@@ -288,14 +222,8 @@ struct VariableDefinitionExpression : public DefinitionStatement
 	std::shared_ptr<Expression> initializer = nullptr;
 	std::vector<std::string> succeedingDefinitionNames;
 
-	VariableDefinitionExpression(uint32_t line)
-		: DefinitionStatement(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::VariableDefinition; }
+	static ExpressionType GetExprType() { return ExpressionType::VariableDefinition; }
 
 	void ResolveType() override;
 };
@@ -304,14 +232,8 @@ struct VariableAccessExpression : public Expression
 {
 	std::string name;
 
-	VariableAccessExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::VariableAccess; }
+	static ExpressionType GetExprType() { return ExpressionType::VariableAccess; }
 
 	void ResolveType() override;
 };
@@ -328,14 +250,8 @@ struct FunctionDefinitionExpression : public Expression
 	FunctionPrototype prototype;
 	std::vector<std::unique_ptr<Expression>> body;
 
-	FunctionDefinitionExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::FunctionDefinition; }
+	static ExpressionType GetExprType() { return ExpressionType::FunctionDefinition; }
 
 	void ResolveType() override;
 };
@@ -344,15 +260,9 @@ struct FunctionCallExpression : public Expression
 {
 	std::string name;
 	std::vector<std::unique_ptr<Expression>> arguments;
-	
-	FunctionCallExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
 
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::FunctionCall; }
+	static ExpressionType GetExprType() { return ExpressionType::FunctionCall; }
 
 	void ResolveType() override;
 };
@@ -361,14 +271,8 @@ struct ReturnStatement : public Expression
 {
 	std::unique_ptr<Expression> value;
 
-	ReturnStatement(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::Return; }
+	static ExpressionType GetExprType() { return ExpressionType::Return; }
 
 	void ResolveType() override;
 };
@@ -378,14 +282,8 @@ struct EnumDefinitionExpression : public Expression
 	std::string name;
 	std::vector<std::unique_ptr<Expression>> members;
 
-	EnumDefinitionExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::EnumDefinition; }
+	static ExpressionType GetExprType() { return ExpressionType::EnumDefinition; }
 };
 
 struct StructDefinitionExpression : public Expression
@@ -393,12 +291,6 @@ struct StructDefinitionExpression : public Expression
 	std::string name;
 	std::vector<std::unique_ptr<VariableDefinitionExpression>> members;
 
-	StructDefinitionExpression(uint32_t line)
-		: Expression(line)
-	{
-		nodeType = GetNodeType();
-	}
-
 	Value Generate(Generator&) override;
-	static NodeType GetNodeType() { return NodeType::StructDefinition; }
+	static ExpressionType GetExprType() { return ExpressionType::StructDefinition; }
 };

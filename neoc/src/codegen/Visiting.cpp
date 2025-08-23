@@ -13,8 +13,7 @@ void Generator::VisitFunctionDefinition(FunctionDefinitionExpression* expr)
 	auto& llvm_module = module.llvm_module;
 
 	FunctionPrototype& prototype = expr->prototype;
-	if (llvm_module->getFunction(prototype.Name))
-		throw CompileError(expr->sourceLine, "redefinition of function '{}'", prototype.Name);
+	Assert(!llvm_module->getFunction(prototype.Name), "redefinition of function '{}'", prototype.Name);
 
 	std::vector<Type*> parameterTypes(prototype.Parameters.size());
 	uint32_t i = 0;
@@ -64,12 +63,10 @@ void Generator::VisitEnumDefinition(EnumDefinitionExpression* expr)
 		}
 		else if (auto binary = ToExpr<BinaryExpression>(member))
 		{
-			if (hasUsedDeducedValue)
-				throw CompileError(binary->sourceLine, "within an enum, explicitly assigning values is only allowed before all deduced ones");
+			Assert(!hasUsedDeducedValue, "within an enum, explicitly assigning values is only allowed before all deduced ones");
 
-			VariableAccessExpression* variable = nullptr;
-			if (!(variable = ToExpr<VariableAccessExpression>(binary->left)))
-				throw CompileError(binary->sourceLine, "expected identifier for enum member {}", memberIndex);
+			VariableAccessExpression* variable = ToExpr<VariableAccessExpression>(binary->left);
+			Assert(variable, "expected identifier for enum member {}", memberIndex);
 
 			const std::string& memberName = variable->name;
 			Value value = binary->right->Generate(*this);
@@ -79,7 +76,7 @@ void Generator::VisitEnumDefinition(EnumDefinitionExpression* expr)
 			enumeration.members[memberName] = value.rvalue.value;
 		}
 		else {
-			throw CompileError(expr->sourceLine, "invalid member {} for enum '{}'", memberIndex, expr->name);
+			Assert(false, "invalid member {} for enum '{}'", memberIndex, expr->name);
 		}
 
 		memberIndex++;
@@ -94,12 +91,12 @@ void Generator::VisitTopLevelDefinitions()
 	// only top level
 	for (auto& node : module.SyntaxTree->children)
 	{
-		switch (node->nodeType) {
-		case NodeType::FunctionDefinition: {
+		switch (node->exprType) {
+		case ExpressionType::FunctionDefinition: {
 			VisitFunctionDefinition(ToExpr<FunctionDefinitionExpression>(node));
 			break;
 		}
-		case NodeType::EnumDefinition: {
+		case ExpressionType::EnumDefinition: {
 			VisitEnumDefinition(ToExpr<EnumDefinitionExpression>(node));
 			break;
 		}

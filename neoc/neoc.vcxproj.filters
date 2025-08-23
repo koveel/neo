@@ -39,6 +39,7 @@
     <ClInclude Include="src\codegen\GeneratorContext.h" />
     <ClInclude Include="src\codegen\Expressed.h" />
     <ClInclude Include="src\codegen\Value.h" />
+    <ClInclude Include="src\CmdLine\File.h" />
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="src\CmdLine\CommandLineArguments.cpp">

@@ -45,7 +45,7 @@ static bool UnaryExprImpliesLoad(UnaryExpression* unary)
 
 Expressed Expressed::TryImplicitLoadIfNecessary(Generator& generator) const
 {
-	bool isConstantExpr = expression->nodeType == NodeType::Primary || expression->nodeType == NodeType::String; // todo: combine those nodes wtf
+	bool isConstantExpr = expression->nodeType == ExpressionType::Primary || expression->nodeType == ExpressionType::String; // todo: combine those nodes wtf
 	if (isConstantExpr)
 		return *this;
 
@@ -57,7 +57,7 @@ Expressed Expressed::TryImplicitLoadIfNecessary(Generator& generator) const
 		return Load(generator);
 	}
 
-	bool isVariableAccess = expression->nodeType == NodeType::VariableAccess;
+	bool isVariableAccess = expression->nodeType == ExpressionType::VariableAccess;
 	bool isGep = llvm::isa<llvm::GetElementPtrInst>(raw);
 
 	if (!isVariableAccess && !isGep)

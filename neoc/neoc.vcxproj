@@ -103,6 +103,7 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClInclude Include="src\CmdLine\CommandLineArguments.h" />
+    <ClInclude Include="src\CmdLine\File.h" />
     <ClInclude Include="src\codegen\Expressed.h" />
     <ClInclude Include="src\codegen\GeneratorContext.h" />
     <ClInclude Include="src\codegen\Value.h" />

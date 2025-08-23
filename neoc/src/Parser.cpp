@@ -204,8 +204,17 @@ static std::unique_ptr<T> MakeExpression(Type* type = nullptr)
 {
 	MadeExpressionsCount++;
 
-	auto expression = std::make_unique<T>(parser->lexer->line);
+	auto& lexer = *parser->lexer;
+
+	const char* filesource = lexer.file.source.c_str();
+	const char* errorLocation = lexer.previousToken.start + lexer.previousToken.length;
+	size_t rangeOffset = errorLocation - filesource;
+
+	auto expression = std::make_unique<T>();
+	expression->exprType = T::GetExprType();
 	expression->type = type;
+	expression->sourceLine = lexer.line;
+	expression->sourceStart = rangeOffset;
 
 	return expression;
 }
@@ -280,14 +289,14 @@ static std::unique_ptr<Expression> ParseLine(TokenType expectedEndline = TokenTy
 
 	auto expr = ParseExpression(priority);
 
-	switch (expr->nodeType)
+	switch (expr->exprType)
 	{
-	case NodeType::Loop:
-	case NodeType::Branch:
-	case NodeType::Compound:
-	case NodeType::StructDefinition:
-	case NodeType::FunctionDefinition:
-	case NodeType::EnumDefinition:
+	case ExpressionType::Loop:
+	case ExpressionType::Branch:
+	case ExpressionType::Compound:
+	case ExpressionType::StructDefinition:
+	case ExpressionType::FunctionDefinition:
+	case ExpressionType::EnumDefinition:
 		expectEndingToken = false;
 		break;
 	}
