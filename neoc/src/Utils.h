@@ -8,4 +8,4 @@ static std::string FormatString(const std::string& format, Args&&... args)
 
 // check if a string contains a char up to a certain amount of characters
 bool strnchr(const char* string, const char c, int n);
-void hash_combine(std::size_t& seed, uint64_t v);
+void hash_combine(std::size_t& seed, uint64_t h);

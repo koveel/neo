@@ -10,7 +10,7 @@ enum class TypeTag
 	Int8, Int16, Int32, Int64,
 	// Floatin' .
 	Float32, Float64,
-	Bool,
+	//Bool,
 	// Other!!!
 	Array,
 	Struct,
@@ -28,7 +28,7 @@ namespace std
 {
 	template<> struct hash<pair<TypeTag, Type*>>
 	{
-		std::size_t operator()(const std::pair<TypeTag, Type*>& k) const
+		size_t operator()(const pair<TypeTag, Type*>& k) const
 		{
 			size_t seed = 0;
 			hash_combine(seed, (uint64_t)k.first);
@@ -39,7 +39,7 @@ namespace std
 
 	template<> struct hash<pair<Type*, uint64_t>>
 	{
-		std::size_t operator()(const std::pair<Type*, uint64_t>& k) const
+		size_t operator()(const pair<Type*, uint64_t>& k) const
 		{
 			size_t seed = 0;
 			hash_combine(seed, (uintptr_t)k.first);
@@ -69,11 +69,10 @@ public:
 	AliasType* IsAliasFor(Type* other);
 
 	bool IsPointer() const { return tag == TypeTag::Pointer; }
-	bool IsInteger() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Bool; }
-	bool IsNumeric() const { return (tag >= TypeTag::UInt8 && tag <= TypeTag::Int64) || tag == TypeTag::Bool; }
+	bool IsInteger() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Int64; }
+	bool IsNumeric() const { return tag >= TypeTag::UInt8 && tag <= TypeTag::Int64; }
 	bool IsFloatingPoint() const { return tag == TypeTag::Float32 || tag == TypeTag::Float64; }
-	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Bool; }
-	//bool IsString() const { return tag == TypeTag::String; }
+	bool IsSigned() const { return tag >= TypeTag::Int8 && tag <= TypeTag::Float64; }
 
 	uint8_t GetSign() const { return IsSigned() ? true : false; } // for comparisons idk
 	uint32_t GetBitWidth() const

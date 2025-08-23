@@ -98,8 +98,8 @@ static uint32_t GetBitWidthOfIntegralType(TypeTag tag)
 		case TypeTag::UInt64:
 		case TypeTag::Int64:
 			return 64;
-		case TypeTag::Bool:
-			return 1;
+		//case TypeTag::Bool:
+		//	return 1;
 	}
 
 	return 0;
@@ -160,8 +160,8 @@ Value PrimaryExpression::Generate(Generator& generator)
 	case TypeTag::Float32:
 	case TypeTag::Float64:
 		return RValue{ llvm::ConstantFP::get(*context, llvm::APFloat((float)value.f64)), type };
-	case TypeTag::Bool:
-		return RValue{ llvm::ConstantInt::get(*context, llvm::APInt(8, value.b32)), type };
+	//case TypeTag::Bool:
+	//	return RValue{ llvm::ConstantInt::get(*context, llvm::APInt(1, value.b32)), type };
 	}
 
 	Assert(false, "invalid type for primary expression");
@@ -328,13 +328,6 @@ Value UnaryExpression::Generate(Generator& generator)
 	}
 	case UnaryType::Deref:
 	{
-		bool load = true;
-		if (CastExpression* cast = ToExpr<CastExpression>(operand))
-		{
-			if (cast->type->IsPointer())
-				load = false;
-		}
-
 		Type* ptrTy = value.type;
 		Type* elemTy = value.type->contained;
 		if (value.is_rvalue) {
@@ -782,11 +775,14 @@ Value CastExpression::Generate(Generator& generator)
 	Value value = from->Generate(generator);
 	RValue rv = generator.MaterializeToRValue(value);
 
-	bool useTag = false; // tf is this?
-	if (type->IsPointer() || from->type->IsPointer())
-		useTag = true;
+	Type* fromTy = from->type;
+	Type* to = type;
+	if (from->type->IsPointer())
+		fromTy = Type::Get(TypeTag::Pointer); // opaque / dummy pointer type
+	if (type->IsPointer())
+		to = Type::Get(TypeTag::Pointer);
 
-	Cast* cast = useTag ? Cast::IsValid(from->type->tag, type->tag) : Cast::IsValid(from->type, type);
+	Cast* cast = Cast::IsValid(fromTy, to);
 	Assert(cast, "cannot cast from '{}' to '{}'", from->type->GetName(), type->GetName());
 
 	return RValue{ cast->Invoke(rv.value, this), type };
@@ -937,11 +933,11 @@ void Generator::ResolvePrimitiveType(Type& type, int possibleSourceLine)
 		type.raw = llvm::Type::getDoubleTy(*context);
 		return;
 	}
-	case TypeTag::Bool:
-	{
-		type.raw = llvm::Type::getInt1Ty(*context);
-		return;
-	}
+	//case TypeTag::Bool:
+	//{
+	//	type.raw = llvm::Type::getInt1Ty(*context);
+	//	return;
+	//}
 	case TypeTag::Void:
 	{
 		type.raw = llvm::Type::getVoidTy(*context);
@@ -1119,25 +1115,24 @@ static void InitPrimitiveCasts()
 	Type* u8  = Type::Get(TypeTag::UInt8);
 	Type* u16 = Type::Get(TypeTag::UInt16);
 	Type* u32 = Type::Get(TypeTag::UInt32);
-	Type* u64 = Type::Get(TypeTag::UInt64);	
+	Type* u64 = Type::Get(TypeTag::UInt64);
 	Type* f32 = Type::Get(TypeTag::Float32);
 	Type* f64 = Type::Get(TypeTag::Float64);
-	Type* b1  = Type::Get(TypeTag::Bool);
 	Type* ptr = Type::Get(TypeTag::Pointer);
 
-	Type* signedIntTypes[] = { i8, i16, i32, i64 };
+	Type* signedIntTypes[]   = { i8, i16, i32, i64 };
 	Type* unsignedIntTypes[] = { u8, u16, u32, u64 };
 	Type* fpTypes[] = { f32, f64 };
 
-	const bool Allow_Int_X_FP_Implicitly   = true;
-	const bool Allow_Int_X_UInt_Implicitly = true;
+	static constexpr bool Allow_Int_X_FP_Implicitly   = true;
+	static constexpr bool Allow_Int_X_UInt_Implicitly = true;
 
-	Cast::Add(TypeTag::Pointer, TypeTag::Int64,   CastFunctions::Pointer_To_Integer, false);
-	Cast::Add(TypeTag::Int64,   TypeTag::Pointer, CastFunctions::Integer_To_Pointer, false);
-	Cast::Add(TypeTag::Bool,    TypeTag::Pointer, CastFunctions::Integer_To_Pointer, true);
-	Cast::Add(TypeTag::Pointer, TypeTag::Bool,    CastFunctions::Pointer_To_Integer, true);
-
-	Cast::Add(TypeTag::Pointer, TypeTag::Pointer, CastFunctions::Pointer_To_Pointer, false);
+	Type* ptrTy = Type::Get(TypeTag::Pointer, nullptr);
+	Cast::Add(ptrTy, i64,   CastFunctions::Pointer_To_Integer, false);
+	Cast::Add(i64, ptrTy,   CastFunctions::Pointer_To_Integer, false);
+	Cast::Add(u8, ptrTy,    CastFunctions::Integer_To_Pointer, true);
+	Cast::Add(ptrTy, u8,    CastFunctions::Pointer_To_Integer, true);
+	Cast::Add(ptrTy, ptrTy, CastFunctions::Pointer_To_Pointer, false); // ??
 
 	for (Type* sint : signedIntTypes)
 	{
@@ -1150,10 +1145,6 @@ static void InitPrimitiveCasts()
 			Cast::Add(sint, sint2, CastFunctions::SInteger_To_SInteger, true);
 			Cast::Add(sint2, sint, CastFunctions::SInteger_To_SInteger, true);
 		}
-
-		// Int / bool
-		Cast::Add(sint, b1, CastFunctions::SInteger_To_SInteger, true);
-		Cast::Add(b1, sint, CastFunctions::SInteger_To_SInteger, true);
 
 		// Int / FP
 		for (Type* fp : fpTypes)
@@ -1180,10 +1171,6 @@ static void InitPrimitiveCasts()
 			Cast::Add(uint, uint2, CastFunctions::UInteger_To_UInteger, true);
 			Cast::Add(uint2, uint, CastFunctions::UInteger_To_UInteger, true);
 		}
-
-		// UInt / bool
-		Cast::Add(uint, b1, CastFunctions::UInteger_To_SInteger, true);
-		Cast::Add(b1, uint, CastFunctions::SInteger_To_UInteger, true);
 
 		// UInt / FP
 		for (Type* fp : fpTypes)

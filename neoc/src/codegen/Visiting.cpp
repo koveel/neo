@@ -74,7 +74,6 @@ void Generator::VisitEnumDefinition(EnumDefinitionExpression* expr)
 			const std::string& memberName = variable->name;
 			Value value = binary->right->Generate(*this);
 			ASSERT(value.is_rvalue);
-			//RValue rv = MaterializeToRValue(value);
 			value = CastRValueIfNecessary(value.rvalue, enumeration.integralType, false, binary->right.get());
 
 			enumeration.members[memberName] = value.rvalue.value;

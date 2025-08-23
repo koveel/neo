@@ -15,6 +15,7 @@ std::unordered_map<ArrayType::Key, ArrayType*> ArrayType::RegisteredTypes;
 static const std::pair<TypeTag, const char*> TagToStringMap[] =
 {
 	{ TypeTag::Void,    "void",   },
+	{ TypeTag::UInt8,   "bool",   },
 	{ TypeTag::UInt8,   "u8",     },
 	{ TypeTag::UInt16,  "u16",    },
 	{ TypeTag::UInt32,  "u32",    },
@@ -25,7 +26,6 @@ static const std::pair<TypeTag, const char*> TagToStringMap[] =
 	{ TypeTag::Int64,   "i64",    },
 	{ TypeTag::Float32, "f32",    },
 	{ TypeTag::Float64, "f64",    },
-	{ TypeTag::Bool,    "bool",   },
 };
 
 std::string Type::TagToString(TypeTag tag, Type* type)
@@ -100,9 +100,7 @@ Type* Type::Get(const std::string& name, Type* contained)
 Type* Type::FromLLVM(llvm::Type* raw)
 {
 	if (raw->isPointerTy())
-	{
 		ASSERT(false);
-	}
 
 	ASSERT(LLVMToNeoTypes.count(raw));
 

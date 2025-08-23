@@ -503,7 +503,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.b32 = true;
-			primary->type = Type::Get(TypeTag::Bool);
+			primary->type = Type::Get(TypeTag::UInt8);
 
 			return primary;
 		}
@@ -513,7 +513,7 @@ static std::unique_ptr<Expression> ParsePrimaryExpression()
 
 			auto primary = MakeExpression<PrimaryExpression>();
 			primary->value.b32 = false;
-			primary->type = Type::Get(TypeTag::Bool);
+			primary->type = Type::Get(TypeTag::UInt8);
 
 			return primary;
 		}

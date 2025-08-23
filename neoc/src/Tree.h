@@ -128,7 +128,6 @@ enum class BinaryType
 
 	Range, // ..
 	MemberAccess,
-	//ConciseMemberAccess,
 	Subscript,
 
 	Xor,
@@ -300,25 +299,6 @@ struct VariableDefinitionExpression : public DefinitionStatement
 
 	void ResolveType() override;
 };
-
-// Will be contained in a VariableDefinitionExpression if initializing an array, to provide capacity and elements
-//struct ArrayDefinitionExpression : public DefinitionStatement
-//{
-//	VariableDefinitionExpression* variableDef = nullptr;
-//
-//	uint64_t capacity = 0; // todo: make expr
-//
-//	ArrayDefinitionExpression(uint32_t line)
-//		: DefinitionStatement(line)
-//	{
-//		nodeType = GetNodeType();
-//	}
-//
-//	Value Generate(Generator&) override;
-//	static NodeType GetNodeType() { return NodeType::ArrayDefinition; }
-//
-//	void ResolveType() override;
-//};
 
 struct VariableAccessExpression : public Expression
 {

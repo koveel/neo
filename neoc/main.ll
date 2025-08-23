@@ -79,11 +79,10 @@ entry:
   %arr.idx1 = getelementptr inbounds [6 x i32], ptr %nums, i32 0, i32 2
   %pnum = alloca ptr, align 8
   store ptr %arr.idx1, ptr %pnum, align 8
-  %28 = load ptr, ptr %pnum, align 8
-  %29 = getelementptr inbounds i32, ptr %28, i32 1
-  store ptr %29, ptr %pnum, align 8
-  %30 = load i32, ptr %29, align 4
-  store i32 %30, ptr %return, align 4
+  %28 = getelementptr inbounds %String, ptr %string, i32 0, i32 0
+  %29 = load ptr, ptr %28, align 8
+  %30 = ptrtoint ptr %29 to i8
+  store i8 %30, ptr %return, align 1
   br label %exit
 
 exit:                                             ; preds = %entry

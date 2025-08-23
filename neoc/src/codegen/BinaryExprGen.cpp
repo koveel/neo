@@ -116,45 +116,58 @@ static llvm::CmpInst::Predicate LLVMCompareOpFromBinaryExpr(BinaryType operation
 	return {};
 }
 
-//static void ResolveBinaryExpressionTypeDiscrepancy(Value left, Value right, BinaryExpression* binaryExpr)
-//{
-//	PROFILE_FUNCTION();
-//
-//	Type* lType = left.type;
-//	Type* rType = right.type;
-//
-//	// If an operand is floating point, make other operand floating point too
-//	bool hasFP = lType->IsFloatingPoint() || rType->IsFloatingPoint();
-//	if (hasFP)
-//	{
-//		uint32_t nonFP = lType->IsFloatingPoint() ? 1 : 0;
-//		uint32_t fp = 1 - nonFP;
-//
-//		Cast* cast = Cast::IsValid(exprs[nonFP].second, exprs[fp].second);
-//		if (!cast) {
-//			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
-//		}
-//		exprs[nonFP].first = cast->Invoke(exprs[nonFP].first);
-//		exprs[nonFP].second = exprs[fp].second;
-//		return;
-//	}
-//
-//	// If an operand is signed int, make other operand signed int too
-//	bool hasSignedInt = lType->IsSigned() || rType->IsSigned();
-//	if (hasSignedInt)
-//	{
-//		uint32_t nonSign = lType->IsSigned() ? 1 : 0;
-//		uint32_t sign = 1 - nonSign;
-//
-//		Cast* cast = Cast::IsValid(exprs[nonSign].second, exprs[sign].second);
-//		if (!cast) {
-//			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
-//		}
-//		exprs[nonSign].first = cast->Invoke(exprs[nonSign].first);
-//		exprs[nonSign].second = exprs[sign].second;
-//		return;
-//	}
-//}
+static std::pair<RValue, RValue> ResolveBinaryExpressionTypeDiscrepancy(Value left, Value right, BinaryExpression* binaryExpr)
+{
+	PROFILE_FUNCTION();
+
+	Type* lType = left.type;
+	Type* rType = right.type;
+	// dummify ptr
+	if (lType->IsPointer())
+		lType = Type::Get(TypeTag::Pointer);
+	if (rType->IsPointer())
+		rType = Type::Get(TypeTag::Pointer);
+
+	std::pair<llvm::Value*, Type*> results[2] = {
+		{ left.rvalue.value, lType }, { right.rvalue.value, rType },
+	};
+
+	// If an operand is floating point, make other operand floating point too
+	bool hasFP = lType->IsFloatingPoint() || rType->IsFloatingPoint();
+	if (hasFP)
+	{
+		uint32_t nonFP = lType->IsFloatingPoint() ? 1 : 0;
+		uint32_t fp = 1 - nonFP;
+
+		Cast* cast = Cast::IsValid(results[nonFP].second, results[fp].second);
+		if (!cast) {
+			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
+		}
+
+		results[nonFP].first = cast->Invoke(results[nonFP].first);
+		results[nonFP].second = results[fp].second;
+	}
+
+	// If an operand is signed int, make other operand signed int too
+	bool hasSignedInt = lType->IsSigned() || rType->IsSigned();
+	if (hasSignedInt)
+	{
+		uint32_t nonSign = lType->IsSigned() ? 1 : 0;
+		uint32_t sign = 1 - nonSign;
+
+		Cast* cast = Cast::IsValid(results[nonSign].second, results[sign].second);
+		if (!cast) {
+			throw CompileError(binaryExpr->sourceLine, "cannot convert from '{}' to '{}'", rType->GetName(), lType->GetName());
+		}
+		results[nonSign].first = cast->Invoke(results[nonSign].first);
+		results[nonSign].second = results[sign].second;
+	}
+
+	return {
+			RValue{ results[0].first, results[0].second },
+			RValue{ results[1].first, results[1].second },
+	};
+}
 
 Value BinaryExpression::Generate(Generator& generator)
 {
@@ -201,8 +214,9 @@ Value BinaryExpression::Generate(Generator& generator)
 			return RValue{ result, lhsrv.type };
 		}
 
-		//ResolveBinaryExpressionTypeDiscrepancy({ lhs.raw, left->type }, { rhs.raw, right->type }, this);
-		__debugbreak();
+		auto pair = ResolveBinaryExpressionTypeDiscrepancy(lhsrv, rhsrv, this);
+		lhsrv = pair.first;
+		rhsrv = pair.second;
 	}
 
 	llvm::Instruction::BinaryOps instruction = (llvm::Instruction::BinaryOps)-1;

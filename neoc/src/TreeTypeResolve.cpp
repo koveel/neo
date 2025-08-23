@@ -4,24 +4,6 @@
 
 void UnaryExpression::ResolveType()
 {
-	//operand->ResolveType();
-	//type = operand->type;
-	//
-	//switch (unaryType)
-	//{
-	//case UnaryType::AddressOf:
-	//{
-	//	type = type->GetPointerTo();
-	//	break;
-	//}
-	//case UnaryType::Deref:
-	//{
-	//	type = type->GetContainedType();
-	//	break;
-	//}
-	//default:
-	//	break;
-	//}
 }
 
 void BinaryExpression::ResolveType()
@@ -48,7 +30,6 @@ void LoopExpression::ResolveType()
 
 void ConstantDefinitionExpression::ResolveType()
 {
-	//type = Type::Get(rhs);
 }
 
 void VariableDefinitionExpression::ResolveType()
@@ -67,15 +48,9 @@ void CastExpression::ResolveType()
 
 }
 
-//void ArrayDefinitionExpression::ResolveType()
-//{
-//}
-
 void VariableAccessExpression::ResolveType()
 {
 }
-
-//void LoopExp
 
 void FunctionDefinitionExpression::ResolveType()
 {
@@ -94,7 +69,4 @@ void ReturnStatement::ResolveType()
 {
 	if (!value)
 		return;
-
-	//value->ResolveType();
-	//type = value->type;
 }

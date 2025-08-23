@@ -27,12 +27,12 @@ main :: () -> i32
     print((str++).text);
     print((*str).text);
 
-    // print((*str).text);
-    // print(str.text);
-
     nums := [] {
         0, 1, 2, 3, 4, 5
     };
     pnum := @nums[2];
-    return *(++pnum);
+
+    return string.text != 0;
+
+    //return *(++pnum);
 }

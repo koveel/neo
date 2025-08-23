@@ -3,42 +3,27 @@
 struct Type;
 struct Value;
 
-// only difference between l and rvalue structs is semantics for now
 struct LValue
 {
 	struct
 	{
 		llvm::Value* ptr = nullptr;
-		// addr space etc
+		// addr space etc...
 	} address;
 	Type* type = nullptr;
-
-	LValue() = default;
-	LValue(llvm::Value* ptr, Type* type)
-		: address({ ptr }), type(type)
-	{}
-
-	//operator Value() const;
 };
 
 struct RValue
 {
 	llvm::Value* value = nullptr;
 	Type* type = nullptr;
-
-	RValue() = default;
-	RValue(llvm::Value* value, Type* type)
-		: value(value), type(type)
-	{}
-
-	//operator Value() const;
 };
 
 struct Value
 {
 	union // ub?
 	{
-		LValue lvalue;
+		LValue lvalue{};
 		RValue rvalue;
 	};
 	bool is_rvalue = false;

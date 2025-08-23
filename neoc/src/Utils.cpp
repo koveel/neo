@@ -12,8 +12,8 @@ bool strnchr(const char* string, const char c, int n)
 	return false;
 }
 
-void hash_combine(std::size_t& seed, uint64_t v)
+void hash_combine(std::size_t& seed, uint64_t h)
 {
 	std::hash<uint64_t> hasher;
-	seed ^= hasher(v) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
+	seed ^= hasher(h) + 0x9e3779b9 + (seed << 6) + (seed >> 2);
 }
